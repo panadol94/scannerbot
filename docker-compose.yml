@@ -1,0 +1,33 @@
+version: "3.8"
+
+services:
+  bot:
+    build: .
+    container_name: boda8-bot
+    restart: always
+    ports:
+      - "8081:8080"
+    depends_on:
+      - db
+    environment:
+      - PORT=8080
+      - DATABASE_URL=postgresql://user:password@db:5432/telegram_bot
+      - TZ=Asia/Kuala_Lumpur
+      - LOG_LEVEL=INFO
+      - DB_POOL_SIZE=5
+      - TOKEN=${TOKEN}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
+
+  db:
+    image: postgres:15-alpine
+    container_name: boda8-db
+    restart: always
+    environment:
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=telegram_bot
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
