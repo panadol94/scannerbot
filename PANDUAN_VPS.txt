@@ -1,0 +1,35 @@
+PANDUAN DEPLOY KE VPS (209.97.175.214)
+=========================================
+
+Fail dalam zip ini adalah:
+1. CODE: Fresh dari Cloud Run production (boda8-bot).
+2. DATABASE: Fresh export dari Cloud SQL (backup.sql).
+
+LANGKAH 1: UPLOAD
+-----------------
+1. Buka WinSCP -> Connect ke 209.97.175.214 (User: root).
+2. Upload folder "boda8-fresh-code" ini ke dalam VPS.
+
+LANGKAH 2: SETUP DI VPS (Guna PuTTY/Terminal)
+---------------------------------------------
+Masuk ke VPS dan run:
+
+cd boda8-fresh-code
+
+# Setup Docker (sekali run sahaja)
+docker build -t boda8-bot .
+
+# Run Bot & Database
+docker compose up -d
+
+# Restore Database (PENTING!)
+# Tunggu 10 saat lepas bot start, kemudian run:
+docker cp backup.sql boda8-db:/backup.sql
+docker exec -i boda8-db psql -U user -d telegram_bot -f /backup.sql
+
+LANGKAH 3: TUKAR WEBHOOK
+------------------------
+Lepas semua siap, buka browser di laptop anda:
+https://api.telegram.org/bot<TOKEN>/setWebhook?url=http://209.97.175.214:8080/telegram/webhook
+
+*Gantikan <TOKEN> dengan token bot anda.

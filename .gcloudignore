@@ -1,0 +1,20 @@
+# jangan upload benda pelik / besar / socket
+.pm2/
+**/*.sock
+**/*.log
+
+# python cache
+__pycache__/
+**/__pycache__/
+**/*.pyc
+
+# venv
+venv/
+.venv/
+
+# git
+.git/
+.gitignore
+
+# misc
+.DS_Store
