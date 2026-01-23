@@ -14,7 +14,10 @@ services:
       - DATABASE_URL=postgresql://user:password@db:5432/telegram_bot
       - TZ=Asia/Kuala_Lumpur
       - LOG_LEVEL=INFO
-      - DB_POOL_SIZE=5
+      - DB_POOL_SIZE=20
+      - DB_MAX_OVERFLOW=10
+      - BROADCAST_BATCH=50
+      - BROADCAST_SLEEP=0.1
       - TOKEN=${TOKEN}
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
 
