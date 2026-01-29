@@ -100,6 +100,10 @@ engine = sa.create_engine(
 TG_API = "https://api.telegram.org/bot{token}/{method}"
 SESSION = requests.Session()
 
+# Admin interactive flow state management
+# Format: {(bot_id, user_id): (action, timestamp)}
+pending_inputs = {}
+
 
 # ---------------------------
 # UTILS
@@ -1954,6 +1958,18 @@ def build_settings_keyboard_full(page: int, pages: int):
                 {"text": "👥 Set Admin Group (in GROUP)", "callback_data": "st:admingroup:set"},
             ],
             
+            # FINANCIAL SETTINGS
+            [
+                {"text": "💰 FINANCIAL SETTINGS", "callback_data": "st:noop"},
+            ],
+            [
+                {"text": "💵 View Rates", "callback_data": "st:financial:viewrates"},
+            ],
+            [
+                {"text": "✏️ Edit Share Amount", "callback_data": "st:financial:setshare"},
+                {"text": "✏️ Edit Min Withdraw", "callback_data": "st:financial:setminwd"},
+            ],
+            
             # CONTENT & MESSAGES
             [
                 {"text": "📝 CONTENT & MESSAGES", "callback_data": "st:noop"},
@@ -2892,6 +2908,42 @@ def telegram_webhook():
                     send_message(token, chat_id, ("✅ Admin removed" if ok else "⚠️ Admin tak jumpa") + f": <code>{target}</code>", parse_mode="HTML")
 
         elif require_admin(bot_row, uid):
+            #  PENDING INPUTS HANDLER (interactive flows from settings panel)
+            if (bot_id, uid) in pending_inputs:
+                action, ts = pending_inputs[(bot_id, uid)]
+                
+                # Timeout after 5 minutes
+                if time.time() - ts > 300:
+                    del pending_inputs[(bot_id, uid)]
+                    send_message(token, chat_id, "⏱ Input timeout. Please try again.", parse_mode="HTML")
+                    return "OK", 200
+                
+                if action == "setshare":
+                    try:
+                        amt = float(text_msg.strip())
+                        if amt <= 0:
+                            raise ValueError("Amount must be positive")
+                        with engine.begin() as conn:
+                            conn.execute(text("UPDATE bots SET affiliate_amount=:a WHERE id=:i"), {"a": amt, "i": bot_id})
+                        del pending_inputs[(bot_id, uid)]
+                        send_message(token, chat_id, f"✅ Share commission updated: <b>RM{amt:.2f}</b> per click", parse_mode="HTML")
+                    except Exception:
+                        send_message(token, chat_id, "❌ Invalid amount. Must be a positive number (e.g. 1.00)", parse_mode="HTML")
+                    return "OK", 200
+                
+                elif action == "setminwd":
+                    try:
+                        amt = float(text_msg.strip())
+                        if amt <= 0:
+                            raise ValueError("Amount must be positive")
+                        with engine.begin() as conn:
+                            conn.execute(text("UPDATE bots SET min_withdraw_amount=:a WHERE id=:i"), {"a": amt, "i": bot_id})
+                        del pending_inputs[(bot_id, uid)]
+                        send_message(token, chat_id, f"✅ Min withdraw updated: <b>RM{amt:.2f}</b>", parse_mode="HTML")
+                    except Exception:
+                        send_message(token, chat_id, "❌ Invalid amount. Must be a positive number (e.g. 30.00)", parse_mode="HTML")
+                    return "OK", 200
+
             if text_msg.startswith("/broadcast") and msg.get("reply_to_message"):
                 handle_broadcast_optimized(bot_row, chat_id, uid, text_msg, msg["reply_to_message"])
 
@@ -4131,6 +4183,47 @@ def telegram_webhook():
                 bot_row2 = get_bot_by_id(bot_id) or bot_row
                 send_or_edit_settings_panel(bot_row2, chat_id, uid, page=1, edit_ctx={"message_id": message_id})
                 return "OK", 200
+
+            if action == "financial":
+                sub = parts[2] if len(parts) > 2 else ""
+                
+                if sub == "viewrates":
+                    bot_row2 = get_bot_by_id(bot_id) or bot_row
+                    share_amt = get_bot_affiliate_amount(bot_row2)
+                    min_wd = get_bot_min_withdraw(bot_row2)
+                    msg = (
+                        "💰 <b>FINANCIAL RATES</b>\n"
+                        "━━━━━━━━━━━━━━━━━━\n"
+                        f"• 1 click share: <b>RM{share_amt:.2f}</b>\n"
+                        f"• Min withdraw: <b>RM{min_wd:.2f}</b>\n"
+                        "\n"
+                        "Use buttons to edit 📝"
+                    )
+                    send_message(token, chat_id, msg, parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+                
+                elif sub == "setshare":
+                    pending_inputs[(bot_id, uid)] = ("setshare", time.time())
+                    msg = (
+                        "✏️ <b>Edit Share Amount</b>\n\n"
+                        "Reply with amount per click (RM)\n"
+                        "Contoh: <code>1.00</code> or <code>0.50</code>"
+                    )
+                    send_message(token, chat_id, msg, parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+                
+                elif sub == "setminwd":
+                    pending_inputs[(bot_id, uid)] = ("setminwd", time.time())
+                    msg = (
+                        "✏️ <b>Edit Min Withdraw</b>\n\n"
+                        "Reply with minimum withdrawal amount (RM)\n"
+                        "Contoh: <code>30.00</code> or <code>50.00</code>"
+                    )
+                    send_message(token, chat_id, msg, parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
 
             if action == "preview":
                 which = parts[2] if len(parts) > 2 else ""
