@@ -1871,64 +1871,73 @@ def build_settings_text(bot_row: dict, stats: dict, cb_total: int, cb_rows: list
     inplace = "🟢 ON" if bot_row.get("inplace_callbacks") else "🔴 OFF"
 
     adming = bot_row.get("admin_group_id")
-    adming_txt = f"<code>{adming}</code>" if adming else "<i>Belum set</i>"
-    tasks_txt = "🟢 ON" if can_use_tasks() else "🔴 OFF"
-    base_url_txt = PUBLIC_BASE_URL if PUBLIC_BASE_URL else "<i>Belum set (PUBLIC_BASE_URL)</i>"
+    adming_txt = f"<code>{adming}</code>" if adming else "<i>Not set</i>"
+    base_url_txt = PUBLIC_BASE_URL if PUBLIC_BASE_URL else "<i>Not set</i>"
 
-    if cb_rows:
-        lines = []
-        for r in cb_rows:
-            lines.append(f"• <code>{r['key']}</code>  ({r['type']}, d={int(r['delay_seconds'] or 0)}s)")
-        cb_preview = "\n".join(lines)
-    else:
-        cb_preview = "<i>Tiada callback/command.</i>"
+    # Calculate verified percentage
+    verified_pct = 0
+    if stats['total_users'] > 0:
+        verified_pct = int((stats['verified_users'] / stats['total_users']) * 100)
 
     pages = max(1, (cb_total + page_size - 1) // page_size)
 
     txt = (
-        "⚙️ <b>CYBERBOT CONTROL PANEL</b>\n"
+        "⚙️ <b>ADMIN CONTROL PANEL</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        f"🤖 Bot: <b>@{username}</b>\n"
-        f"🆔 BotID: <code>{bot_id}</code>\n"
-        f"👤 OwnerID: <code>{bot_row.get('owner_id')}</code>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"🧲 JoinLock: <b>{lock_join}</b>\n"
-        f"🔒 PhoneLock: <b>{lock_phone}</b>\n"
-        f"✅ ManualApprove(Premium): <b>{manual}</b>\n"
-        f"🧩 Inplace Callbacks: <b>{inplace}</b>\n"
-        f"👥 AdminGroup: {adming_txt}\n"
-        f"☁️ CloudTasks: <b>{tasks_txt}</b>\n"
-        f"🌐 PUBLIC_BASE_URL: {base_url_txt}\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "📊 <b>Stats</b>\n"
-        f"• Users: <b>{stats['total_users']}</b>\n"
-        f"• Verified (phone): <b>{stats['verified_users']}</b>\n"
-        f"• Premium: <b>{stats['premium_users']}</b>\n"
-        f"• Pending WD: <b>{stats['pending_withdrawals']}</b>\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"🧩 <b>Actions</b>  (page {page}/{pages}, total {cb_total})\n"
-        f"{cb_preview}\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        f"{HELP_PLACEHOLDERS_SHORT}\n"
-        "✅ Guna button bawah untuk manage laju.\n"
+        f"🤖 <b>{username}</b>\n"
+        f"🆔 <code>{bot_id}</code>\n"
         "\n"
-        "🎰 <b>Scanner</b>\n"
-        "• /addscanner <provider> (reply media)\n"
-        "• /addgames <provider> (reply file txt)\n"
-        "• /updategames <provider> (reply file txt)\n"
-        "Rules: auto shuffle, top 20, range 34-95, bold ≥80%, cooldown 5s.\n"
+        "📊 <b>QUICK STATS</b>\n"
+        f"👥 Users: <b>{stats['total_users']}</b>\n"
+        f"✅ Verified: <b>{stats['verified_users']}</b> ({verified_pct}%)\n"
+        f"💎 Premium: <b>{stats['premium_users']}</b>\n"
+        f"💰 Pending WD: <b>{stats['pending_withdrawals']}</b>\n"
+        "\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "🔐 <b>SECURITY & ACCESS</b>\n"
+        f"• JoinLock: {lock_join}\n"
+        f"• PhoneLock: {lock_phone}\n"
+        f"• Manual Approval: {manual}\n"
+        f"• Admin Group: {adming_txt}\n"
+        "\n"
+        "⚙️ <b>BOT FEATURES</b>\n"
+        f"• Inplace Callbacks: {inplace}\n"
+        f"• Base URL: {base_url_txt}\n"
+        "\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"🧩 <b>CALLBACKS/ACTIONS</b> (Page {page}/{pages})\n"
     )
+    
+    # Show callbacks list
+    if cb_rows:
+        for r in cb_rows:
+            txt += f"• <code>{r['key']}</code> ({r['type']}, {int(r['delay_seconds'] or 0)}s)\n"
+    else:
+        txt += "<i>No callbacks yet.</i>\n"
+    
+    txt += (
+        "\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "📁 Use buttons below to manage\n"
+        "\n"
+        f"{HELP_PLACEHOLDERS_SHORT}\n"
+    )
+    
     return txt, pages
 
 
 
 def build_settings_keyboard_full(page: int, pages: int):
-    """Legacy full settings keyboard (kept for backward compatibility)."""
+    """Improved settings keyboard with grouped categories."""
     prev_page = page - 1 if page > 1 else 1
     next_page = page + 1 if page < pages else pages
 
     kb = {
         "inline_keyboard": [
+            # SECURITY & ACCESS TOGGLES
+            [
+                {"text": "🔐 SECURITY & ACCESS", "callback_data": "st:noop"},
+            ],
             [
                 {"text": "🧲 JoinLock ON", "callback_data": "st:join:on"},
                 {"text": "🧲 JoinLock OFF", "callback_data": "st:join:off"},
@@ -1938,55 +1947,74 @@ def build_settings_keyboard_full(page: int, pages: int):
                 {"text": "🔓 PhoneLock OFF", "callback_data": "st:lock:off"},
             ],
             [
-                {"text": "✅ ManualApprove ON", "callback_data": "st:manual:on"},
-                {"text": "✅ ManualApprove OFF", "callback_data": "st:manual:off"},
+                {"text": "✅ Manual Approve ON", "callback_data": "st:manual:on"},
+                {"text": "❌ Manual Approve OFF", "callback_data": "st:manual:off"},
             ],
             [
-                {"text": "🧩 Inplace ON", "callback_data": "st:inplace:on"},
-                {"text": "🧩 Inplace OFF", "callback_data": "st:inplace:off"},
+                {"text": "👥 Set Admin Group (in GROUP)", "callback_data": "st:admingroup:set"},
             ],
+            
+            # CONTENT & MESSAGES
             [
-                {"text": "👥 Set Admin Group (dalam GROUP)", "callback_data": "st:admingroup:set"},
+                {"text": "📝 CONTENT & MESSAGES", "callback_data": "st:noop"},
             ],
             [
                 {"text": "📌 Preview START", "callback_data": "st:preview:start"},
                 {"text": "⏳ Preview LOADING", "callback_data": "st:preview:loading"},
             ],
             [
-                {"text": "📌 How START", "callback_data": "st:how:setstart"},
-                {"text": "⏳ How LOADING", "callback_data": "st:how:setloading"},
+                {"text": "📌 How: START", "callback_data": "st:how:setstart"},
+                {"text": "⏳ How: LOADING", "callback_data": "st:how:setloading"},
             ],
             [
-                {"text": "🧩 How CALLBACK", "callback_data": "st:how:callback"},
-                {"text": "🧷 How SETCOMMAND", "callback_data": "st:how:setcommand"},
+                {"text": "🧩 How: CALLBACK", "callback_data": "st:how:callback"},
+                {"text": "🧷 How: COMMAND", "callback_data": "st:how:setcommand"},
+            ],
+            
+            # FEATURES
+            [
+                {"text": "⚙️ BOT FEATURES", "callback_data": "st:noop"},
             ],
             [
-                {"text": "🧲 How JOINLOCK", "callback_data": "st:how:joinlock"},
-                {"text": "✅ How MANUAL APPROVE", "callback_data": "st:how:manualapprove"},
+                {"text": "🧩 Inplace ON", "callback_data": "st:inplace:on"},
+                {"text": "🧩 Inplace OFF", "callback_data": "st:inplace:off"},
             ],
             [
-                {"text": "📣 How BROADCAST", "callback_data": "st:how:broadcast"},
-                {"text": "➕ How ADDBOT", "callback_data": "st:how:addbot"},
+                {"text": "🧲 How: JoinLock", "callback_data": "st:how:joinlock"},
+                {"text": "✅ How: Manual Approve", "callback_data": "st:how:manualapprove"},
             ],
             [
-                {"text": "📃 MyBots", "callback_data": "st:mybots:0"},
-                {"text": "🧠 Full Placeholders", "callback_data": "st:placeholders:full"},
+                {"text": "📣 How: Broadcast", "callback_data": "st:how:broadcast"},
+                {"text": "➕ How: AddBot", "callback_data": "st:how:addbot"},
+            ],
+            
+            # DATA MANAGEMENT
+            [
+                {"text": "📊 DATA & EXPORT", "callback_data": "st:noop"},
             ],
             [
-                {"text": "🗑 Delete Callback", "callback_data": "st:cbdelmenu:1"},
-                {"text": "🔄 Refresh", "callback_data": f"st:refresh:{page}"},
-            ],
-            [
-                {"text": "⬅️ Prev", "callback_data": f"st:cbpage:{prev_page}"},
-                {"text": f"📄 Page {page}/{pages}", "callback_data": "st:noop"},
-                {"text": "Next ➡️", "callback_data": f"st:cbpage:{next_page}"},
-            ],
-            [
-                {"text": "📤 Export ALL", "callback_data": "st:export:all"},
+                {"text": "📤 Export ALL Users", "callback_data": "st:export:all"},
                 {"text": "✅ Export VERIFIED", "callback_data": "st:export:verified"},
             ],
             [
-                {"text": "🗂️ Settings Categories", "callback_data": "st:home:1"},
+                {"text": "📃 My Bots", "callback_data": "st:mybots:0"},
+                {"text": "🗑 Delete Callback", "callback_data": "st:cbdelmenu:1"},
+            ],
+            
+            # UTILITIES
+            [
+                {"text": "🔧 UTILITIES", "callback_data": "st:noop"},
+            ],
+            [
+                {"text": "🧠 Full Placeholders", "callback_data": "st:placeholders:full"},
+                {"text": "🔄 Refresh Panel", "callback_data": f"st:refresh:{page}"},
+            ],
+            
+            # PAGINATION
+            [
+                {"text": "⬅️ Prev", "callback_data": f"st:cbpage:{prev_page}"},
+                {"text": f"📄 {page}/{pages}", "callback_data": "st:noop"},
+                {"text": "Next ➡️", "callback_data": f"st:cbpage:{next_page}"},
             ],
         ]
     }
