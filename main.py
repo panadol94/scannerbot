@@ -1972,7 +1972,11 @@ def build_settings_keyboard_full(page: int, pages: int):
             
             # CONTENT & MESSAGES
             [
-                {"text": "📝 CONTENT & MESSAGES", "callback_data": "st:noop"},
+                {"text": "📝 CONTENT MANAGEMENT", "callback_data": "st:noop"},
+            ],
+            [
+                {"text": "✏️ Edit START Message", "callback_data": "st:content:editstart"},
+                {"text": "✏️ Edit LOADING Message", "callback_data": "st:content:editloading"},
             ],
             [
                 {"text": "📌 Preview START", "callback_data": "st:preview:start"},
@@ -2002,6 +2006,21 @@ def build_settings_keyboard_full(page: int, pages: int):
             [
                 {"text": "📣 How: Broadcast", "callback_data": "st:how:broadcast"},
                 {"text": "➕ How: AddBot", "callback_data": "st:how:addbot"},
+            ],
+            
+            # SCAN SETTINGS
+            [
+                {"text": "🎰 SCAN SETTINGS", "callback_data": "st:noop"},
+            ],
+            [
+                {"text": "⚙️ Set Global Limit", "callback_data": "st:scan:setglobal"},
+            ],
+            [
+                {"text": "📊 View Usage", "callback_data": "st:scan:viewusage"},
+                {"text": "🔄 Reset Usage", "callback_data": "st:scan:reset"},
+            ],
+            [
+                {"text": "✏️ Custom Limit Message", "callback_data": "st:scan:editmsg"},
             ],
             
             # DATA MANAGEMENT
@@ -2942,6 +2961,77 @@ def telegram_webhook():
                         send_message(token, chat_id, f"✅ Min withdraw updated: <b>RM{amt:.2f}</b>", parse_mode="HTML")
                     except Exception:
                         send_message(token, chat_id, "❌ Invalid amount. Must be a positive number (e.g. 30.00)", parse_mode="HTML")
+                    return "OK", 200
+                
+                elif action == "editstart":
+                    if not msg.get("reply_to_message"):
+                        send_message(token, chat_id, "⚠️ Please REPLY to the prompt message with your START content.", parse_mode="HTML")
+                        return "OK", 200
+                    rep = msg["reply_to_message"]
+                    mt, mid, txt = save_content_from_reply(rep)
+                    with engine.begin() as conn:
+                        conn.execute(text("""
+                            UPDATE bots
+                            SET start_message=:t,
+                                start_media_type=:mt,
+                                start_media_file_id=:mf
+                            WHERE id=:i
+                        """), {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
+                    del pending_inputs[(bot_id, uid)]
+                    send_message(token, chat_id, "✅ START message updated!", parse_mode="HTML")
+                    return "OK", 200
+                
+                elif action == "editloading":
+                    if not msg.get("reply_to_message"):
+                        send_message(token, chat_id, "⚠️ Please REPLY to the prompt message with your LOADING content.", parse_mode="HTML")
+                        return "OK", 200
+                    rep = msg["reply_to_message"]
+                    mt, mid, txt = save_content_from_reply(rep)
+                    with engine.begin() as conn:
+                        conn.execute(text("""
+                            UPDATE bots
+                            SET loading_message=:t,
+                                loading_media_type=:mt,
+                                loading_media_file_id=:mf
+                            WHERE id=:i
+                        """), {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
+                    del pending_inputs[(bot_id, uid)]
+                    send_message(token, chat_id, "✅ LOADING message updated!", parse_mode="HTML")
+                    return "OK", 200
+                
+                elif action == "scanlimit":
+                    input_val = text_msg.strip().lower()
+                    if input_val in ("off", "0", "unlimited", "none"):
+                        with engine.begin() as conn:
+                            conn.execute(text("UPDATE bots SET scan_limit_per_day=NULL WHERE id=:i"), {"i": bot_id})
+                        del pending_inputs[(bot_id, uid)]
+                        send_message(token, chat_id, "✅ Scan limit set to UNLIMITED", parse_mode="HTML")
+                    elif input_val.isdigit():
+                        lim = int(input_val)
+                        with engine.begin() as conn:
+                            conn.execute(text("UPDATE bots SET scan_limit_per_day=:l WHERE id=:i"), {"l": lim, "i": bot_id})
+                        del pending_inputs[(bot_id, uid)]
+                        send_message(token, chat_id, f"✅ Scan limit set to <b>{lim}</b> scans/day", parse_mode="HTML")
+                    else:
+                        send_message(token, chat_id, "❌ Invalid input. Use a number or 'off'", parse_mode="HTML")
+                    return "OK", 200
+                
+                elif action == "scanlimitmsg":
+                    if not msg.get("reply_to_message"):
+                        send_message(token, chat_id, "⚠️ Please REPLY to the prompt message with your custom limit message.", parse_mode="HTML")
+                        return "OK", 200
+                    rep = msg["reply_to_message"]
+                    mt, mid, txt = save_content_from_reply(rep)
+                    with engine.begin() as conn:
+                        conn.execute(text("""
+                            UPDATE bots
+                            SET scan_limit_message=:t,
+                                scan_limit_media_type=:mt,
+                                scan_limit_media_file_id=:mf
+                            WHERE id=:i
+                        """), {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
+                    del pending_inputs[(bot_id, uid)]
+                    send_message(token, chat_id, "✅ Custom scan limit message updated!", parse_mode="HTML")
                     return "OK", 200
 
             if text_msg.startswith("/broadcast") and msg.get("reply_to_message"):
@@ -4220,6 +4310,103 @@ def telegram_webhook():
                         "✏️ <b>Edit Min Withdraw</b>\n\n"
                         "Reply with minimum withdrawal amount (RM)\n"
                         "Contoh: <code>30.00</code> or <code>50.00</code>"
+                    )
+                    send_message(token, chat_id, msg, parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+
+            if action == "content":
+                sub = parts[2] if len(parts) > 2 else ""
+                
+                if sub == "editstart":
+                    pending_inputs[(bot_id, uid)] = ("editstart", time.time())
+                    msg = (
+                        "✏️ <b>Edit START Message</b>\n\n"
+                        "Reply to this message with your new START message.\n"
+                        "You can send text or media (photo/video/gif)."
+                    )
+                    send_message(token, chat_id, msg, parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+                
+                elif sub == "editloading":
+                    pending_inputs[(bot_id, uid)] = ("editloading", time.time())
+                    msg = (
+                        "✏️ <b>Edit LOADING Message</b>\n\n"
+                        "Reply to this message with your new LOADING message.\n"
+                        "You can send text or media (photo/video/gif)."
+                    )
+                    send_message(token, chat_id, msg, parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+
+            if action == "scan":
+                sub = parts[2] if len(parts) > 2 else ""
+                
+                if sub == "setglobal":
+                    bot_row2 = get_bot_by_id(bot_id) or bot_row
+                    cur_lim = bot_row2.get("scan_limit_per_day")
+                    cur_txt = "UNLIMITED" if (cur_lim is None or int(cur_lim or 0) <= 0) else str(int(cur_lim))
+                    
+                    pending_inputs[(bot_id, uid)] = ("scanlimit", time.time())
+                    msg = (
+                        "⚙️ <b>Set Global Scan Limit</b>\n\n"
+                        f"Current: <b>{cur_txt}</b> scans/day\n\n"
+                        "Reply with:\n"
+                        "• Number (e.g. <code>20</code>) for limit\n"
+                        "• <code>off</code> for unlimited"
+                    )
+                    send_message(token, chat_id, msg, parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+                
+                elif sub == "viewusage":
+                    # Show scan usage stats
+                    from datetime import date
+                    today = date.today().isoformat()
+                    with engine.connect() as conn:
+                        usage = conn.execute(
+                            text("SELECT user_id, scan_count FROM scan_daily_usage WHERE bot_id=:b AND day=:d ORDER BY scan_count DESC LIMIT 10"),
+                            {"b": bot_id, "d": today}
+                        ).mappings().all()
+                    
+                    if usage:
+                        lines = [f"• <code>{u['user_id']}</code>: <b>{u['scan_count']}</b> scans" for u in usage]
+                        usage_txt = "\n".join(lines)
+                    else:
+                        usage_txt = "<i>No scans today yet.</i>"
+                    
+                    msg = (
+                        "📊 <b>Scan Usage Today</b>\n"
+                        "━━━━━━━━━━━━━━━━━━\n"
+                        f"{usage_txt}\n\n"
+                        "<i>Top 10 users shown</i>"
+                    )
+                    send_message(token, chat_id, msg, parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+                
+                elif sub == "reset":
+                    from datetime import date
+                    today = date.today().isoformat()
+                    with engine.begin() as conn:
+                        res = conn.execute(
+                            text("DELETE FROM scan_daily_usage WHERE bot_id=:b AND day=:d"),
+                            {"b": bot_id, "d": today}
+                        )
+                        deleted = int(getattr(res, "rowcount", 0) or 0)
+                    msg = f"✅ Reset scan usage for today (deleted {deleted} records)"
+                    send_message(token, chat_id, msg, parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+                
+                elif sub == "editmsg":
+                    pending_inputs[(bot_id, uid)] = ("scanlimitmsg", time.time())
+                    msg = (
+                        "✏️ <b>Custom Scan Limit Message</b>\n\n"
+                        "Reply to this message with your custom message\n"
+                        "shown when user exceeds daily scan limit.\n\n"
+                        "You can send text or media (photo/video/gif)."
                     )
                     send_message(token, chat_id, msg, parse_mode="HTML")
                     answer_callback(token, cq["id"])
