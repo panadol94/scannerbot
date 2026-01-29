@@ -280,6 +280,19 @@ def init_db():
       PRIMARY KEY (bot_id, user_id)
     );
 
+    -- ----------------------------
+    -- BIGINT MIGRATION for scan limits (fix integer overflow)
+    -- Safe migration: converts existing INT values to BIGINT
+    -- ----------------------------
+    ALTER TABLE scan_limit_overrides 
+      ALTER COLUMN limit_per_day TYPE BIGINT USING limit_per_day::BIGINT;
+
+    ALTER TABLE scan_daily_usage 
+      ALTER COLUMN count TYPE BIGINT USING count::BIGINT;
+
+    ALTER TABLE bots 
+      ALTER COLUMN scan_limit_per_day TYPE BIGINT USING scan_limit_per_day::BIGINT;
+
 """
     with engine.begin() as conn:
         _exec_ddl_multi(conn, ddl)
