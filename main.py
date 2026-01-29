@@ -2023,6 +2023,44 @@ def build_settings_keyboard_full(page: int, pages: int):
                 {"text": "✏️ Custom Limit Message", "callback_data": "st:scan:editmsg"},
             ],
             
+            # WITHDRAWAL MESSAGES
+            [
+                {"text": "✉️ WITHDRAWAL MESSAGES", "callback_data": "st:noop"},
+            ],
+            [
+                {"text": "✏️ Edit Request Message", "callback_data": "st:withdrawal:editrequest"},
+            ],
+            [
+                {"text": "✏️ Edit Approve Message", "callback_data": "st:withdrawal:editapprove"},
+                {"text": "✏️ Edit Reject Message", "callback_data": "st:withdrawal:editreject"},
+            ],
+            
+            # VERIFICATION MESSAGES
+            [
+                {"text": "📢 VERIFICATION MESSAGES", "callback_data": "st:noop"},
+            ],
+            [
+                {"text": "✏️ JoinLock Message", "callback_data": "st:verify:editjoin"},
+                {"text": "✏️ Contact Request", "callback_data": "st:verify:editcontact"},
+            ],
+            [
+                {"text": "✏️ Pending Message", "callback_data": "st:verify:editpending"},
+                {"text": "✏️ Verified Message", "callback_data": "st:verify:editverified"},
+            ],
+            [
+                {"text": "✏️ Rejected Message", "callback_data": "st:verify:editrejected"},
+                {"text": "✏️ Group Contact Msg", "callback_data": "st:verify:editgroupcontact"},
+            ],
+            
+            # SCANNER MANAGEMENT
+            [
+                {"text": "🎮 SCANNER MANAGEMENT", "callback_data": "st:noop"},
+            ],
+            [
+                {"text": "📖 How: Add Scanner", "callback_data": "st:how:addscanner"},
+                {"text": "📖 How: Add/Update Games", "callback_data": "st:how:addgames"},
+            ],
+            
             # DATA MANAGEMENT
             [
                 {"text": "📊 DATA & EXPORT", "callback_data": "st:noop"},
@@ -3032,6 +3070,125 @@ def telegram_webhook():
                         """), {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
                     del pending_inputs[(bot_id, uid)]
                     send_message(token, chat_id, "✅ Custom scan limit message updated!", parse_mode="HTML")
+                    return "OK", 200
+                
+                # Withdrawal Messages
+                elif action == "withdrawalrequest":
+                    if not msg.get("reply_to_message"):
+                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
+                        return "OK", 200
+                    rep = msg["reply_to_message"]
+                    mt, mid, txt = save_content_from_reply(rep)
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET withdrawal_request_message=:t, withdrawal_request_media_type=:mt, withdrawal_request_media_file_id=:mf WHERE id=:i"), 
+                                   {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
+                    del pending_inputs[(bot_id, uid)]
+                    send_message(token, chat_id, "✅ Withdrawal REQUEST message updated!", parse_mode="HTML")
+                    return "OK", 200
+                
+                elif action == "withdrawalapprove":
+                    if not msg.get("reply_to_message"):
+                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
+                        return "OK", 200
+                    rep = msg["reply_to_message"]
+                    mt, mid, txt = save_content_from_reply(rep)
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET withdrawal_approve_message=:t, withdrawal_approve_media_type=:mt, withdrawal_approve_media_file_id=:mf WHERE id=:i"),
+                                   {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
+                    del pending_inputs[(bot_id, uid)]
+                    send_message(token, chat_id, "✅ Withdrawal APPROVE message updated!", parse_mode="HTML")
+                    return "OK", 200
+                
+                elif action == "withdrawalreject":
+                    if not msg.get("reply_to_message"):
+                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
+                        return "OK", 200
+                    rep = msg["reply_to_message"]
+                    mt, mid, txt = save_content_from_reply(rep)
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET withdrawal_reject_message=:t, withdrawal_reject_media_type=:mt, withdrawal_reject_media_file_id=:mf WHERE id=:i"),
+                                   {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
+                    del pending_inputs[(bot_id, uid)]
+                    send_message(token, chat_id, "✅ Withdrawal REJECT message updated!", parse_mode="HTML")
+                    return "OK", 200
+                
+                # Verification Messages
+                elif action == "joinmsg":
+                    if not msg.get("reply_to_message"):
+                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
+                        return "OK", 200
+                    rep = msg["reply_to_message"]
+                    mt, mid, txt = save_content_from_reply(rep)
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET join_message=:t, join_message_media_type=:mt, join_message_media_file_id=:mf WHERE id=:i"),
+                                   {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
+                    del pending_inputs[(bot_id, uid)]
+                    send_message(token, chat_id, "✅ JoinLock message updated!", parse_mode="HTML")
+                    return "OK", 200
+                
+                elif action == "contactmsg":
+                    if not msg.get("reply_to_message"):
+                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
+                        return "OK", 200
+                    rep = msg["reply_to_message"]
+                    mt, mid, txt = save_content_from_reply(rep)
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET contact_message=:t, contact_message_media_type=:mt, contact_message_media_file_id=:mf WHERE id=:i"),
+                                   {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
+                    del pending_inputs[(bot_id, uid)]
+                    send_message(token, chat_id, "✅ Contact request message updated!", parse_mode="HTML")
+                    return "OK", 200
+                
+                elif action == "pendingmsg":
+                    if not msg.get("reply_to_message"):
+                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
+                        return "OK", 200
+                    rep = msg["reply_to_message"]
+                    mt, mid, txt = save_content_from_reply(rep)
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET pending_message=:t, pending_message_media_type=:mt, pending_message_media_file_id=:mf WHERE id=:i"),
+                                   {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
+                    del pending_inputs[(bot_id, uid)]
+                    send_message(token, chat_id, "✅ Pending message updated!", parse_mode="HTML")
+                    return "OK", 200
+                
+                elif action == "verifiedmsg":
+                    if not msg.get("reply_to_message"):
+                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
+                        return "OK", 200
+                    rep = msg["reply_to_message"]
+                    mt, mid, txt = save_content_from_reply(rep)
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET verified_message=:t, verified_message_media_type=:mt, verified_message_media_file_id=:mf WHERE id=:i"),
+                                   {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
+                    del pending_inputs[(bot_id, uid)]
+                    send_message(token, chat_id, "✅ Verified message updated!", parse_mode="HTML")
+                    return "OK", 200
+                
+                elif action == "rejectedmsg":
+                    if not msg.get("reply_to_message"):
+                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
+                        return "OK", 200
+                    rep = msg["reply_to_message"]
+                    mt, mid, txt = save_content_from_reply(rep)
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET rejected_message=:t, rejected_message_media_type=:mt, rejected_message_media_file_id=:mf WHERE id=:i"),
+                                   {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
+                    del pending_inputs[(bot_id, uid)]
+                    send_message(token, chat_id, "✅ Rejected message updated!", parse_mode="HTML")
+                    return "OK", 200
+                
+                elif action == "groupcontactmsg":
+                    if not msg.get("reply_to_message"):
+                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
+                        return "OK", 200
+                    rep = msg["reply_to_message"]
+                    mt, mid, txt = save_content_from_reply(rep)
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET group_contact_message=:t, group_contact_message_media_type=:mt, group_contact_message_media_file_id=:mf WHERE id=:i"),
+                                   {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
+                    del pending_inputs[(bot_id, uid)]
+                    send_message(token, chat_id, "✅ Group contact message updated!", parse_mode="HTML")
                     return "OK", 200
 
             if text_msg.startswith("/broadcast") and msg.get("reply_to_message"):
@@ -4409,6 +4566,57 @@ def telegram_webhook():
                         "You can send text or media (photo/video/gif)."
                     )
                     send_message(token, chat_id, msg, parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+
+            if action == "withdrawal":
+                sub = parts[2] if len(parts) > 2 else ""
+                if sub == "editrequest":
+                    pending_inputs[(bot_id, uid)] = ("withdrawalrequest", time.time())
+                    send_message(token, chat_id, "✏️ <b>Edit Withdrawal Request Message</b>\n\nReply with message shown when user REQUESTS withdrawal.\n\nYou can send text or media.", parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+                elif sub == "editapprove":
+                    pending_inputs[(bot_id, uid)] = ("withdrawalapprove", time.time())
+                    send_message(token, chat_id, "✏️ <b>Edit Withdrawal Approve Message</b>\n\nReply with message when approved.\nPlaceholders: <code>{amount}</code>, <code>{balance_after}</code>\n\nYou can send text or media.", parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+                elif sub == "editreject":
+                    pending_inputs[(bot_id, uid)] = ("withdrawalreject", time.time())
+                    send_message(token, chat_id, "✏️ <b>Edit Withdrawal Reject Message</b>\n\nReply with message when rejected.\n\nYou can send text or media.", parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+
+            if action == "verify":
+                sub = parts[2] if len(parts) > 2 else ""
+                if sub == "editjoin":
+                    pending_inputs[(bot_id, uid)] = ("joinmsg", time.time())
+                    send_message(token, chat_id, "✏️ <b>Edit JoinLock Message</b>\n\nReply with message when user needs to join channels/groups.\n\nYou can send text or media.", parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+                elif sub == "editcontact":
+                    pending_inputs[(bot_id, uid)] = ("contactmsg", time.time())
+                    send_message(token, chat_id, "✏️ <b>Edit Contact Request Message</b>\n\nReply with message when requesting phone.\n\nYou can send text or media.", parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+                elif sub == "editpending":
+                    pending_inputs[(bot_id, uid)] = ("pendingmsg", time.time())
+                    send_message(token, chat_id, "✏️ <b>Edit Pending Message</b>\n\nReply with message while verification pending.\n\nYou can send text or media.", parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+                elif sub == "editverified":
+                    pending_inputs[(bot_id, uid)] = ("verifiedmsg", time.time())
+                    send_message(token, chat_id, "✏️ <b>Edit Verified Message</b>\n\nReply with message when VERIFIED.\n\nYou can send text or media.", parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+                elif sub == "editrejected":
+                    pending_inputs[(bot_id, uid)] = ("rejectedmsg", time.time())
+                    send_message(token, chat_id, "✏️ <b>Edit Rejected Message</b>\n\nReply with message when REJECTED.\n\nYou can send text or media.", parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+                elif sub == "editgroupcontact":
+                    pending_inputs[(bot_id, uid)] = ("groupcontactmsg", time.time())
+                    send_message(token, chat_id, "✏️ <b>Edit Group Contact Message</b>\n\nReply with message when group contacts shared.\n\nYou can send text or media.", parse_mode="HTML")
                     answer_callback(token, cq["id"])
                     return "OK", 200
 
