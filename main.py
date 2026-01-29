@@ -2576,24 +2576,42 @@ def handle_broadcast_optimized(bot_row, chat_id, admin_id, text_msg, reply_msg):
         return
 
     send_message(token, chat_id, f"⚠️ Cloud Tasks belum setup. Broadcast direct to {len(user_ids)} users...")
+    
+    # Batch fetch all users for better performance (fixes N+1 query)
+    bot_username = bot_row.get("bot_username") or ""
+    stmt = text("""
+        SELECT user_id, first_name, username, balance, shared_count, member_id
+        FROM users
+        WHERE bot_id=:b AND user_id = ANY(:uids)
+    """).bindparams(sa.bindparam("uids", type_=sa.ARRAY(sa.BigInteger())))
+    
+    with engine.connect() as conn:
+        user_rows = conn.execute(stmt, {"b": bot_id, "uids": user_ids}).mappings().all()
+    
+    # Create lookup dict for faster access
+    user_dict = {u["user_id"]: dict(u) for u in user_rows}
+    
     sent = 0
+    failed = 0
     for uid in user_ids:
         try:
-            urow = get_user_row(bot_id, uid) or {"user_id": uid}
-            ptxt = render_placeholders(final_txt, bot_row.get("bot_username") or "", urow)
-            share_q = make_share_query(bot_row.get("bot_username") or "", urow)
+            urow = user_dict.get(uid) or {"user_id": uid}
+            ptxt = render_placeholders(final_txt, bot_username, urow)
+            share_q = make_share_query(bot_username, urow)
             ptxt, mk = parse_buttons(ptxt, share_inline_query=share_q)
 
             if mt and mid:
-                send_media(token, uid, mt, mid, caption=ptxt, reply_markup=mk)
+                send_media(token, uid, mt, mid, caption=ptxt, reply_markup=mk, parse_mode="HTML")
             else:
-                send_message(token, uid, ptxt, reply_markup=mk)
+                send_message(token, uid, ptxt, reply_markup=mk, parse_mode="HTML")
 
             sent += 1
             time.sleep(BROADCAST_SLEEP)
-        except Exception:
-            pass
-    send_message(token, chat_id, f"✅ Done. Sent: {sent}")
+        except Exception as e:
+            failed += 1
+            logger.warning(f"Broadcast send failed uid={uid}: {e}")
+    
+    send_message(token, chat_id, f"✅ Done. Sent: {sent}/{len(user_ids)} (failed: {failed})")
 
 
 def handle_withdraw_request(bot_row, chat_id, user):
@@ -2773,6 +2791,7 @@ def task_broadcast():
         rows = conn.execute(stmt, {"b": bot_id, "uids": list(user_ids)}).mappings().all()
 
     sent = 0
+    failed = 0
     for u in rows:
         try:
             ud = dict(u)
@@ -2781,16 +2800,17 @@ def task_broadcast():
             ptxt, mk = parse_buttons(ptxt, share_inline_query=share_q)
 
             if mt and mid:
-                send_media(token, u["user_id"], mt, mid, caption=ptxt, reply_markup=mk)
+                send_media(token, u["user_id"], mt, mid, caption=ptxt, reply_markup=mk, parse_mode="HTML")
             else:
-                send_message(token, u["user_id"], ptxt, reply_markup=mk)
+                send_message(token, u["user_id"], ptxt, reply_markup=mk, parse_mode="HTML")
 
             sent += 1
             time.sleep(BROADCAST_SLEEP)
-        except Exception:
-            pass
+        except Exception as e:
+            failed += 1
+            logger.warning(f"Broadcast task send failed uid={u['user_id']}: {e}")
 
-    return jsonify({"ok": True, "sent": sent}), 200
+    return jsonify({"ok": True, "sent": sent, "failed": failed}), 200
 
 
 
