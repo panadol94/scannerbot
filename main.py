@@ -3698,10 +3698,19 @@ def telegram_webhook():
                         _admin_user = _from.get("username")
                         _who = f"@{_admin_user}" if _admin_user else f"<a href='tg://user?id={_admin_id}'>{html.escape(_admin_name)}</a>"
                         _stamp = now_local_str("%Y-%m-%d %H:%M:%S")
-                        _cur = _m.get("text") or ""
+                        
+                        # Check if message is media (has caption) or text
+                        _is_media = _m.get("photo") or _m.get("video") or _m.get("animation") or _m.get("document")
+                        _cur = _m.get("caption") if _is_media else _m.get("text") or ""
+                        
                         if ("<b>APPROVED</b>" not in _cur) and ("<b>REJECTED</b>" not in _cur):
                             _cur = _cur + f"\n\n✅ <b>APPROVED</b>\nBy: {_who}\nAt: {_stamp}"
-                        edit_message(token, _chat_id, _msg_id, _cur, reply_markup={"inline_keyboard": []}, parse_mode="HTML")
+                        
+                        # Use appropriate edit method based on message type
+                        if _is_media:
+                            edit_caption(token, _chat_id, _msg_id, _cur, reply_markup={"inline_keyboard": []}, parse_mode="HTML")
+                        else:
+                            edit_message(token, _chat_id, _msg_id, _cur, reply_markup={"inline_keyboard": []}, parse_mode="HTML")
                 except Exception as e:
                     logger.exception(f"Failed to update admin premium message (approve): {e}")
 
@@ -3732,10 +3741,19 @@ def telegram_webhook():
                         _admin_user = _from.get("username")
                         _who = f"@{_admin_user}" if _admin_user else f"<a href='tg://user?id={_admin_id}'>{html.escape(_admin_name)}</a>"
                         _stamp = now_local_str("%Y-%m-%d %H:%M:%S")
-                        _cur = _m.get("text") or ""
+                        
+                        # Check if message is media (has caption) or text
+                        _is_media = _m.get("photo") or _m.get("video") or _m.get("animation") or _m.get("document")
+                        _cur = _m.get("caption") if _is_media else _m.get("text") or ""
+                        
                         if ("<b>APPROVED</b>" not in _cur) and ("<b>REJECTED</b>" not in _cur):
                             _cur = _cur + f"\n\n❌ <b>REJECTED</b>\nBy: {_who}\nAt: {_stamp}"
-                        edit_message(token, _chat_id, _msg_id, _cur, reply_markup={"inline_keyboard": []}, parse_mode="HTML")
+                        
+                        # Use appropriate edit method based on message type
+                        if _is_media:
+                            edit_caption(token, _chat_id, _msg_id, _cur, reply_markup={"inline_keyboard": []}, parse_mode="HTML")
+                        else:
+                            edit_message(token, _chat_id, _msg_id, _cur, reply_markup={"inline_keyboard": []}, parse_mode="HTML")
                 except Exception as e:
                     logger.exception(f"Failed to update admin premium message (reject): {e}")
 
