@@ -2568,14 +2568,9 @@ def handle_broadcast_optimized(bot_row, chat_id, admin_id, text_msg, reply_msg):
         send_message(token, chat_id, "⚠️ Tiada user untuk broadcast.")
         return
 
-    if can_use_tasks():
-        send_message(token, chat_id, f"📣 Broadcast queued: {len(user_ids)} users (batch={BROADCAST_BATCH})")
-        for i in range(0, len(user_ids), BROADCAST_BATCH):
-            enqueue_broadcast_task({"bot_id": bot_id, "mt": mt, "mid": mid, "final_txt": final_txt, "user_ids": user_ids[i:i + BROADCAST_BATCH]})
-        send_message(token, chat_id, "✅ Broadcast masuk queue. Akan jalan berperingkat.")
-        return
 
-    send_message(token, chat_id, f"⚠️ Cloud Tasks belum setup. Broadcast direct to {len(user_ids)} users...")
+    # Direct broadcast mode (optimized for VPS)
+    send_message(token, chat_id, f"📣 Broadcasting to {len(user_ids)} users...")
     
     # Batch fetch all users for better performance (fixes N+1 query)
     bot_username = bot_row.get("bot_username") or ""
@@ -2759,119 +2754,6 @@ def not_found(e):
     return jsonify({"ok": False, "err": "not_found", "path": request.path, "method": request.method}), 404
 
 
-@app.post("/task/broadcast")
-def task_broadcast():
-    if TASKS_SECRET and request.headers.get("X-Tasks-Secret", "") != TASKS_SECRET:
-        return jsonify({"ok": False, "err": "forbidden"}), 403
-
-    payload = request.get_json(silent=True) or {}
-    bot_id = payload.get("bot_id")
-    user_ids = payload.get("user_ids") or []
-    mt = payload.get("mt")
-    mid = payload.get("mid")
-    final_txt = payload.get("final_txt") or ""
-
-    if not bot_id or not user_ids:
-        return jsonify({"ok": True, "sent": 0}), 200
-
-    bot_row = get_bot_by_id(bot_id)
-    if not bot_row:
-        return jsonify({"ok": True, "sent": 0}), 200
-
-    token = bot_row["token"]
-    bot_username = bot_row.get("bot_username") or ""
-
-    stmt = text("""
-        SELECT user_id, first_name, username, balance, shared_count, member_id
-        FROM users
-        WHERE bot_id=:b AND user_id = ANY(:uids)
-    """).bindparams(sa.bindparam("uids", type_=sa.ARRAY(sa.BigInteger())))
-
-    with engine.connect() as conn:
-        rows = conn.execute(stmt, {"b": bot_id, "uids": list(user_ids)}).mappings().all()
-
-    sent = 0
-    failed = 0
-    for u in rows:
-        try:
-            ud = dict(u)
-            ptxt = render_placeholders(final_txt, bot_username, ud)
-            share_q = make_share_query(bot_username, ud)
-            ptxt, mk = parse_buttons(ptxt, share_inline_query=share_q)
-
-            if mt and mid:
-                send_media(token, u["user_id"], mt, mid, caption=ptxt, reply_markup=mk, parse_mode="HTML")
-            else:
-                send_message(token, u["user_id"], ptxt, reply_markup=mk, parse_mode="HTML")
-
-            sent += 1
-            time.sleep(BROADCAST_SLEEP)
-        except Exception as e:
-            failed += 1
-            logger.warning(f"Broadcast task send failed uid={u['user_id']}: {e}")
-
-    return jsonify({"ok": True, "sent": sent, "failed": failed}), 200
-
-
-
-
-@app.post("/task/action")
-def task_action():
-    """
-    Cloud Tasks handler to finish a delayed callback:
-    edit the original message back to the callback result (premium mode).
-    """
-    if TASKS_SECRET and request.headers.get("X-Tasks-Secret", "") != TASKS_SECRET:
-        return jsonify({"ok": False, "err": "forbidden"}), 403
-
-    payload = request.get_json(silent=True) or {}
-    bot_id = payload.get("bot_id")
-    chat_id = payload.get("chat_id")
-    user_id = payload.get("user_id")
-    message_id = payload.get("message_id")
-    key = payload.get("key")
-
-    if not bot_id or not chat_id or not user_id or not key:
-        return jsonify({"ok": True, "done": False}), 200
-
-    bot_row = get_bot_by_id(str(bot_id))
-    if not bot_row:
-        return jsonify({"ok": True, "done": False}), 200
-
-    token = bot_row["token"]
-    act = actions_get(str(bot_id), str(key))
-    if not act:
-        return jsonify({"ok": True, "done": True, "sent": False}), 200
-
-    urow = get_user_row(str(bot_id), int(user_id)) or {"user_id": int(user_id)}
-    if not ensure_access(bot_row, int(chat_id), int(user_id), urow):
-        return jsonify({"ok": True, "done": True, "sent": False}), 200
-
-    txt = render_placeholders(act.get("text") or "", bot_row.get("bot_username") or "", urow)
-
-    # scan placeholders ({count}/{limit}/{remaining}/{reset})
-
-    with engine.connect() as _c:
-
-        txt = apply_scan_placeholders(_c, txt, bot_row, bot_id, int((urow or {}).get("user_id") or uid))
-    share_q = make_share_query(bot_row.get("bot_username") or "", urow)
-    txt, markup = parse_buttons(txt, share_inline_query=share_q)
-
-    # Prefer edit original message if message_id provided
-    if message_id:
-        try:
-            edit_message(token, int(chat_id), int(message_id), txt or " ", reply_markup=markup, parse_mode="HTML")
-            return jsonify({"ok": True, "done": True, "sent": True, "mode": "edit"}), 200
-        except Exception as e:
-            logger.warning(f"task_action edit failed: {e}")
-
-    # fallback: send new message
-    if act["type"] != "text" and act.get("media_file_id"):
-        send_media(token, int(chat_id), act["type"], act["media_file_id"], caption=txt, reply_markup=markup)
-    else:
-        send_message(token, int(chat_id), txt or " ", reply_markup=markup, parse_mode="HTML")
-
-    return jsonify({"ok": True, "done": True, "sent": True, "mode": "send"}), 200
 
 # Telegram webhook routes
 @app.post("/telegram")
