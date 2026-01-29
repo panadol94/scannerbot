@@ -1158,14 +1158,119 @@ def send_scanner_result(token: str, chat_id: int, firstname: str, provider: str,
 # Scanner animation (BM rotation + progress bar) + edit in-place
 # ---------------------------
 SCAN_BM_FRAMES = [
-    "🧾 <b>Sedang bypass data {prov}</b>...",
-    "⏳ <b>Sila tunggu sebentar...</b>",
+    # Server & Connection (20)
     "📊 <b>sambung ke server TELETHON...</b>",
+    "🔌 <b>Menghubungi server utama...</b>",
+    "🌐 <b>Menyambung ke database pusat...</b>",
+    "📡 <b>Mengakses API {prov}...</b>",
+    "🛰️ <b>Sinkronisasi dengan cloud server...</b>",
+    "⚡ <b>Menjalin sambungan SSL...</b>",
+    "🔐 <b>Verifikasi koneksi selamat...</b>",
+    "🌍 <b>Routing ke server {prov}...</b>",
+    "📶 <b>Stabilkan isyarat...</b>",
+    "🔗 <b>Membina jalur data...</b>",
+    "💫 <b>Optimizing bandwidth...</b>",
+    "🚀 <b>Boosting connection speed...</b>",
+    "🔄 <b>Reconnecting to main hub...</b>",
+    "📨 <b>Fetching live data feed...</b>",
+    "🎯 <b>Locking target server...</b>",
+    "⚙️ <b>Konfigurasi protokol...</b>",
+    "🌟 <b>Establishing secure tunnel...</b>",
+    "💻 <b>Handshake dengan {prov}...</b>",
+    "🔋 <b>Powering up connection...</b>",
+    "📍 <b>Pinpointing data source...</b>",
+    
+    # Data Processing (20)
+    "🧾 <b>Sedang bypass data {prov}</b>...",
     "🔍 <b>Menyusun Data hacking...</b>",
+    "📊 <b>Menganalisa game patterns...</b>",
+    "🎲 <b>Scanning RTP database...</b>",
+    "💎 <b>Extracting premium data...</b>",
+    "🧮 <b>Calculating win rates...</b>",
+    "📈 <b>Parsing statistical models...</b>",
+    "🔬 <b>Deep scan algoritma {prov}...</b>",
+    "🎰 <b>Decrypting game matrices...</b>",
+    "💡 <b>Processing AI predictions...</b>",
+    "🧩 <b>Assembling data fragments...</b>",
+    "📋 <b>Indexing game catalog...</b>",
+    "🔎 <b>Validating data integrity...</b>",
+    "⚗️ <b>Filtering noise data...</b>",
+    "🎯 <b>Targeting high RTP games...</b>",
+    "📦 <b>Packaging scan results...</b>",
+    "🧪 <b>Testing data accuracy...</b>",
+    "🗂️ <b>Organizing game list...</b>",
+    "💾 <b>Caching frequent queries...</b>",
+    "🔐 <b>Encrypting sensitive info...</b>",
+    
+    # System Operations (20)
+    "⏳ <b>Sila tunggu sebentar...</b>",
+    "⌛ <b>Processing request...</b>",
+    "🕐 <b>Hampir siap...</b>",
+    "⚡ <b>Speeding up process...</b>",
+    "🔄 <b>Refreshing cache...</b>",
+    "💫 <b>Optimizing results...</b>",
+    "🎨 <b>Formatting display...</b>",
+    "🧹 <b>Cleaning temp data...</b>",
+    "🔧 <b>Fine-tuning parameters...</b>",
+    "⚙️ <b>Calibrating sensors...</b>",
+    "🎛️ <b>Adjusting settings...</b>",
+    "📊 <b>Generating graphs...</b>",
+    "🖥️ <b>Rendering UI...</b>",
+    "🎬 <b>Preparing animation...</b>",
+    "🎪 <b>Setting up display...</b>",
+    "🔮 <b>Finalizing prediction...</b>",
+    "✨ <b>Polishing output...</b>",
+    "🎁 <b>Wrapping results...</b>",
+    "🏁 <b>Almost done...</b>",
+    "⏱️ <b>Final countdown...</b>",
+    
+    # Hacking/Bypass Theme (20)
+    "🔓 <b>Bypassing firewall {prov}...</b>",
+    "🛡️ <b>Cracking security layer...</b>",
+    "🎭 <b>Masking IP address...</b>",
+    "👾 <b>Injecting bypass script...</b>",
+    "🕵️ <b>Stealth mode activated...</b>",
+    "🔑 <b>Unlocking restricted data...</b>",
+    "🚪 <b>Opening backdoor access...</b>",
+    "🎪 <b>Circumventing detector...</b>",
+    "🌀 <b>Tunneling through proxy...</b>",
+    "🔒 <b>Breaking encryption...</b>",
+    "⚔️ <b>Penetrating defense...</b>",
+    "🎯 <b>Exploiting vulnerability...</b>",
+    "🧨 <b>Defusing anti-bot...</b>",
+    "🎲 <b>Randomizing signature...</b>",
+    "👻 <b>Going ghost mode...</b>",
+    "🦾 <b>Brute-forcing gateway...</b>",
+    "🔨 <b>Hammering weak point...</b>",
+    "⚡ <b>Flash attack initiated...</b>",
+    "🎪 <b>Spoofing credentials...</b>",
+    "🔮 <b>Magic bypass enabled...</b>",
+    
+    # Provider-Specific (20)
+    "🎰 <b>Scanning {prov} slots...</b>",
+    "🎮 <b>Loading {prov} games...</b>",
+    "🃏 <b>Shuffling {prov} deck...</b>",
+    "🎲 <b>Rolling {prov} dice...</b>",
+    "💰 <b>Checking {prov} jackpot...</b>",
+    "🏆 <b>Hunting {prov} bonuses...</b>",
+    "🎁 <b>Unwrapping {prov} prizes...</b>",
+    "⭐ <b>Rating {prov} games...</b>",
+    "🔥 <b>Finding {prov} hot games...</b>",
+    "❄️ <b>Avoiding {prov} cold slots...</b>",
+    "📈 <b>Tracking {prov} trends...</b>",
+    "🎯 <b>Targeting {prov} features...</b>",
+    "💎 <b>Mining {prov} gems...</b>",
+    "🌟 <b>Discovering {prov} secrets...</b>",
+    "🔍 <b>Investigating {prov} RTP...</b>",
+    "📊 <b>Benchmarking {prov} rates...</b>",
+    "🎪 <b>Unveiling {prov} mystery...</b>",
+    "🎨 <b>Styling {prov} results...</b>",
+    "🏅 <b>Ranking {prov} winners...</b>",
+    "🎉 <b>Celebrating {prov} finds...</b>",
 ]
 
 def animate_scanning_progress(token: str, chat_id: int, message_id: int, provider: str = "", cycles: int = 1, delay: float = 0.55) -> None:
-    """Edit mesej semasa untuk tunjuk animasi scanning BM + progress bar."""
+    """Edit mesej semasa untuk tunjuk animasi scanning BM + progress bar with RANDOM messages."""
     if not chat_id or not message_id:
         return
     prov = (provider or "").strip().upper()
@@ -1174,7 +1279,8 @@ def animate_scanning_progress(token: str, chat_id: int, message_id: int, provide
 
     for i in range(total_steps):
         ico = icons[i % len(icons)]
-        line = SCAN_BM_FRAMES[i % len(SCAN_BM_FRAMES)].format(prov=prov)
+        # RANDOM selection from 100 messages instead of cycling!
+        line = random.choice(SCAN_BM_FRAMES).format(prov=prov)
         pct = int(((i + 1) / total_steps) * 100)
         filled = max(0, min(10, pct // 10))
         bar = "▓" * filled + "░" * (10 - filled)
