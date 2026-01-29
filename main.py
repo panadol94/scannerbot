@@ -3686,9 +3686,7 @@ def telegram_webhook():
                 )
                 send_message(token, target_uid, msg_user, parse_mode="HTML")
 
-                # Update mesej admin (macam flow approve withdrawal) + lock button                answer_callback(token, cq["id"], "✅ Approved", show_alert=False)
-
-                # Update mesej admin (macam flow approve withdrawal) + lock button
+                # Update mesej admin dengan nama approver + lock button
                 try:
                     _m = cq.get("message") or {}
                     _chat_id = (_m.get("chat") or {}).get("id")
@@ -3704,8 +3702,8 @@ def telegram_webhook():
                         if ("<b>APPROVED</b>" not in _cur) and ("<b>REJECTED</b>" not in _cur):
                             _cur = _cur + f"\n\n✅ <b>APPROVED</b>\nBy: {_who}\nAt: {_stamp}"
                         edit_message(token, _chat_id, _msg_id, _cur, reply_markup={"inline_keyboard": []}, parse_mode="HTML")
-                except Exception:
-                    logger.exception("Failed to update admin premium message (approve)")
+                except Exception as e:
+                    logger.exception(f"Failed to update admin premium message (approve): {e}")
 
                 answer_callback(token, cq["id"], "Approved ✅", show_alert=False)
 
@@ -3722,9 +3720,7 @@ def telegram_webhook():
                 )
                 send_message(token, target_uid, msg_user, parse_mode="HTML")
 
-                # Update mesej admin (macam flow reject withdrawal) + lock button                answer_callback(token, cq["id"], "❌ Rejected", show_alert=False)
-
-                # Update mesej admin (macam flow reject withdrawal) + lock button
+                # Update mesej admin dengan nama rej actor + lock button
                 try:
                     _m = cq.get("message") or {}
                     _chat_id = (_m.get("chat") or {}).get("id")
@@ -3740,8 +3736,8 @@ def telegram_webhook():
                         if ("<b>APPROVED</b>" not in _cur) and ("<b>REJECTED</b>" not in _cur):
                             _cur = _cur + f"\n\n❌ <b>REJECTED</b>\nBy: {_who}\nAt: {_stamp}"
                         edit_message(token, _chat_id, _msg_id, _cur, reply_markup={"inline_keyboard": []}, parse_mode="HTML")
-                except Exception:
-                    logger.exception("Failed to update admin premium message (reject)")
+                except Exception as e:
+                    logger.exception(f"Failed to update admin premium message (reject): {e}")
 
                 answer_callback(token, cq["id"], "Rejected ❌", show_alert=False)
 
