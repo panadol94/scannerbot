@@ -1775,6 +1775,77 @@ def delete_callback(bot_id: str, key: str) -> bool:
     return res.rowcount > 0
 
 
+def settings_help_all() -> str:
+    """Return comprehensive help text with all admin commands."""
+    return (
+        "📚 <b>ADMIN COMMANDS GUIDE</b>\n"
+        "━━━━━━━━━━━━━━━━━━\n\n"
+        
+        "🎯 <b>BASIC SETUP</b>\n"
+        "• <code>/setstart</code> - Set START message\n"
+        "• <code>/setloading</code> - Set LOADING message\n"
+        "• <code>/setcallback key</code> - Set callback action\n"
+        "• <code>/setcommand name</code> - Set custom command\n\n"
+        
+        "🔐 <b>SECURITY SETTINGS</b>\n"
+        "• <code>/setlockbot on|off</code> - Lock bot (admin only)\n"
+        "• <code>/setjoin @channel1,@channel2</code> - Set join targets\n"
+        "• <code>/setjoinmsg</code> - Custom join message\n"
+        "• Use buttons in /settings for JoinLock, PhoneLock toggles\n\n"
+        
+        "💰 <b>FINANCIAL</b>\n"
+        "• Settings buttons: Edit Share Amount, Edit Min Withdraw\n"
+        "• <code>/setwithdrawalmsg</code> - Withdrawal prompt message\n"
+        "• <code>/setwithdrawalreject</code> - Rejection message\n\n"
+        
+        "👥 <b>USER MANAGEMENT</b>\n"
+        "• <code>/addadmin user_id days</code> - Add admin (default 30 days)\n"
+        "• <code>/deladmin user_id</code> - Remove admin\n"
+        "• <code>/setcontactmsg</code> - Contact request message\n"
+        "• <code>/setpendingmsg</code> - Pending approval message\n"
+        "• <code>/setverifiedmsg</code> - Verified success message\n"
+        "• <code>/setrejectedmsg</code> - Rejection message\n\n"
+        
+        "📣 <b>BROADCAST</b>\n"
+        "• <code>/broadcast</code> - Send to ALL users\n"
+        "• <code>/broadcast verified</code> - Send to verified only\n"
+        "  (Reply to content you want to broadcast)\n\n"
+        
+        "🎰 <b>SCANNER</b>\n"
+        "• <code>/setscannermedia provider</code> - Set scanner media\n"
+        "• <code>/addgames provider</code> - Add games (reply JSON)\n"
+        "• <code>/setscanlimit 20</code> - Set global daily limit\n"
+        "• <code>/setscanlimit 5 @username</code> - User override\n"
+        "• <code>/setscanlimit reset</code> - Reset today's usage\n"
+        "• <code>/setscanlimitmsg</code> - Custom limit message\n\n"
+        
+        "📊 <b>DATA EXPORT</b>\n"
+        "• Use settings buttons: Export ALL, Export VERIFIED\n\n"
+        
+        "➕ <b>MULTI-BOT</b>\n"
+        "• <code>/addbot</code> - Add new bot (paste token)\n"
+        "• <code>/mybots</code> - List your bots\n\n"
+        
+        "🧩 <b>BUTTON SYNTAX</b>\n"
+        "• <code>!1link Name|https://url.com</code>\n"
+        "• <code>!1callback Name|key</code>\n"
+        "• <code>!1callback Name|key delay=5</code>\n"
+        "• <code>!1share Button Text</code>\n"
+        "• <code>!1withdrawal Withdraw</code>\n"
+        "Row numbers: !1 !2 !3 etc\n\n"
+        
+        "📝 <b>PLACEHOLDERS</b>\n"
+        "• {firstname} {username} {member_id} {date}\n"
+        "• [balance] [share] [link]\n"
+        "• {rand:1-100} {count} {limit} {remaining}\n"
+        "• [web](https://url.com) - clickable link\n"
+        "• **bold** __italic__ - text formatting\n\n"
+        
+        "━━━━━━━━━━━━━━━━━━\n"
+        "💡 <b>TIP:</b> Use specific 'How' buttons in settings\n"
+        "for detailed instructions on each feature"
+    )
+
 def settings_how(topic: str) -> str:
     if topic == "setstart":
         return (
@@ -1871,6 +1942,48 @@ def settings_how(topic: str) -> str:
             "• <code>/setverifiedmsg</code> (reply text)\n"
             "• <code>/setrejectedmsg</code> (reply text)\n"
             "• <code>/setgroupcontactmsg</code> (reply text)\n"
+        )
+    if topic == "addscanner":
+        return (
+            "🎰 <b>How to Add Scanner Provider</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "Scanner functionality requires TWO things:\n"
+            "1️⃣ <b>Scanner Media</b> (intro GIF/video)\n"
+            "2️⃣ <b>Games Database</b> (game list with RTP)\n\n"
+            "📌 <b>Step 1: Add Scanner Media</b>\n"
+            "• Send GIF/video/photo to bot\n"
+            "• Reply to that media:\n"
+            "<code>/setscannermedia jili</code>\n"
+            "<code>/setscannermedia mega888</code>\n\n"
+            "📌 <b>Step 2: Add Games</b>\n"
+            "• See \"📖 How: Add/Update Games\" button\n\n"
+            "✅ <b>When Ready</b>\n"
+            "Create callback button:\n"
+            "<code>!1callback Mega888 Scanner|mega888</code>\n"
+            "User tekan → bot auto keluarkan media + run scanner!\n\n"
+            "💡 <b>Note:</b> Provider key must match (e.g., 'jili', 'mega888')\n"
+        )
+    if topic == "addgames":
+        return (
+            "🎮 <b>How to Add/Update Games</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "📌 <b>Using Admin Panel (Web)</b>\n"
+            "1) Login ke admin panel\n"
+            "2) Go to Games Management\n"
+            "3) Upload CSV or use JSON import\n\n"
+            "📌 <b>Using Bot Commands</b>\n"
+            "Format JSON list, reply ke bot:\n"
+            "<code>/addgames jili</code>\n\n"
+            "<b>JSON Example:</b>\n"
+            "<code>[\n"
+            '  {"name": "Game 1", "rtp": 96.5},\n'
+            '  {"name": "Game 2", "rtp": 97.2}\n'
+            "]</code>\n\n"
+            "📊 <b>CSV Format (Admin Panel):</b>\n"
+            "<code>name,rtp\n"
+            "Fortune Gems,96.52\n"
+            "Lucky Treasure,97.18</code>\n\n"
+            "✅ Games auto-linked to provider key\n"
         )
     return "OK"
 
@@ -1991,6 +2104,14 @@ def build_settings_text(bot_row: dict, stats: dict, cb_total: int, cb_rows: list
 
     pages = max(1, (cb_total + page_size - 1) // page_size)
 
+    # Financial settings
+    share_amt = bot_row.get("affiliate_amount") or AFFILIATE_AMOUNT
+    min_wd = bot_row.get("min_withdraw_amount") or MIN_WITHDRAW_DEFAULT
+    
+    # Scan configuration
+    scan_limit = bot_row.get("scan_limit_per_day")
+    scan_status = "♾️ UNLIMITED" if not scan_limit else f"🔢 {int(scan_limit)}/day"
+
     txt = (
         "⚙️ <b>ADMIN CONTROL PANEL</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
@@ -2002,6 +2123,14 @@ def build_settings_text(bot_row: dict, stats: dict, cb_total: int, cb_rows: list
         f"✅ Verified: <b>{stats['verified_users']}</b> ({verified_pct}%)\n"
         f"💎 Premium: <b>{stats['premium_users']}</b>\n"
         f"💰 Pending WD: <b>{stats['pending_withdrawals']}</b>\n"
+        "\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "💰 <b>FINANCIAL SETTINGS</b>\n"
+        f"• Share Commission: <b>RM{share_amt:.2f}</b> per click\n"
+        f"• Min Withdraw: <b>RM{min_wd:.2f}</b>\n"
+        "\n"
+        "🎰 <b>SCAN CONFIGURATION</b>\n"
+        f"• Daily Limit: {scan_status}\n"
         "\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "🔐 <b>SECURITY & ACCESS</b>\n"
@@ -2183,6 +2312,9 @@ def build_settings_keyboard_full(page: int, pages: int):
             # UTILITIES
             [
                 {"text": "🔧 UTILITIES", "callback_data": "st:noop"},
+            ],
+            [
+                {"text": "📚 All Commands Help", "callback_data": "st:help:all"},
             ],
             [
                 {"text": "🧠 Full Placeholders", "callback_data": "st:placeholders:full"},
@@ -4732,6 +4864,15 @@ def telegram_webhook():
                     preview_start(bot_row, chat_id, uid)
                 elif which == "loading":
                     preview_loading(bot_row, chat_id, uid)
+                answer_callback(token, cq["id"])
+                return "OK", 200
+
+            if action == "help":
+                topic = parts[2] if len(parts) > 2 else ""
+                if topic == "all":
+                    send_message(token, chat_id, settings_help_all(), parse_mode="HTML")
+                else:
+                    send_message(token, chat_id, "ℹ️ Select a specific 'How' button for detailed help.", parse_mode="HTML")
                 answer_callback(token, cq["id"])
                 return "OK", 200
 
