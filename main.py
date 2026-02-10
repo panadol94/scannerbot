@@ -4402,9 +4402,9 @@ def telegram_webhook():
             if key.startswith("scan_"):
                 key = key.split("scan_", 1)[1]
 
-            # ===== DAILY SCAN LIMIT GATE (for scanner providers, even if action exists) =====
+            # ===== DAILY SCAN LIMIT GATE (read-only check, no increment) =====
             try:
-                with engine.begin() as _conn_gate:
+                with engine.connect() as _conn_gate:
                     _media_gate = None
                     _games_gate = None
                     try:
@@ -4420,49 +4420,46 @@ def telegram_webhook():
                     if _is_scanner:
                         # fetch latest bot config (in case just updated)
                         _bot_latest = get_bot_by_id(bot_id) or bot_row
-                        _allowed, _used_after, _lim = scan_daily_touch_or_block(_conn_gate, _bot_latest, bot_id, int(uid))
-                        if not _allowed:
-                            _urow_gate = user_row or get_user_row(bot_id, uid) or {"user_id": uid, "username": username, "first_name": firstname}
-                            _tpl = (_bot_latest.get("scan_limit_message") or "").strip() or "🚫 Had scan harian anda telah habis.\nLimit: {limit}/hari\nCuba semula esok."
-                            _msg = render_placeholders(_tpl, _bot_latest.get("bot_username") or "", _urow_gate)
-                            _msg = apply_scan_placeholders(_conn_gate, _msg, _bot_latest, bot_id, int(uid))
-                            # extra placeholders
-                            if _lim is None:
+                        # READ-ONLY check: do NOT increment here, only check current usage
+                        _lim = get_scan_limit_for_user(_conn_gate, _bot_latest, bot_id, int(uid))
+                        if _lim is not None:
+                            try:
+                                _lim_int = int(_lim)
+                            except Exception:
                                 _lim_int = 0
-                            else:
-                                try:
-                                    _lim_int = int(_lim)
-                                except Exception:
-                                    _lim_int = 0
-                            try:
-                                _used_int = int(_used_after)
-                            except Exception:
-                                _used_int = 0
-                            _remaining = max(0, _lim_int - _used_int) if _lim_int > 0 else 0
+                            if _lim_int > 0:
+                                _used_today, _, _, _ = scan_daily_get_stats(_conn_gate, _bot_latest, bot_id, int(uid))
+                                if _used_today >= _lim_int:
+                                    # BLOCKED: over daily limit
+                                    _urow_gate = user_row or get_user_row(bot_id, uid) or {"user_id": uid, "first_name": (from_user.get("first_name") or "")}
+                                    _tpl = (_bot_latest.get("scan_limit_message") or "").strip() or "🚫 Had scan harian anda telah habis.\nLimit: {limit}/hari\nCuba semula esok."
+                                    _msg = render_placeholders(_tpl, _bot_latest.get("bot_username") or "", _urow_gate)
+                                    _msg = apply_scan_placeholders(_conn_gate, _msg, _bot_latest, bot_id, int(uid))
+                                    _remaining = max(0, _lim_int - _used_today)
 
-                            _msg = (_msg
-                                    .replace("{limit}", str(_lim_int if _lim_int else _lim or ""))
-                                    .replace("{used}", str(_used_int))
-                                    .replace("{remaining}", str(_remaining)))
+                                    _msg = (_msg
+                                            .replace("{limit}", str(_lim_int))
+                                            .replace("{used}", str(_used_today))
+                                            .replace("{remaining}", str(_remaining)))
 
-                            _kb_lim = {"inline_keyboard": [[{"text": "⬅️ Kembali", "callback_data": "cb:menuscanner"}]]}
+                                    _kb_lim = {"inline_keyboard": [[{"text": "⬅️ Kembali", "callback_data": "cb:menuscanner"}]]}
 
-                            # always show alert + send new message (do NOT edit old media message)
-                            try:
-                                answer_callback(token, cq["id"], (_msg[:180] if _msg else "Limit harian habis"), show_alert=True)
-                            except Exception:
-                                try:
-                                    answer_callback(token, cq["id"], "Limit harian habis", show_alert=True)
-                                except Exception:
-                                    pass
-                            try:
-                                send_message(token, chat_id, _msg or "Limit harian habis.", reply_markup=_kb_lim, parse_mode="HTML")
-                            except Exception:
-                                # fallback without parse mode
-                                send_message(token, chat_id, _msg or "Limit harian habis.", reply_markup=_kb_lim)
-                            return "OK", 200
-            except Exception:
-                pass
+                                    # always show alert + send new message (do NOT edit old media message)
+                                    try:
+                                        answer_callback(token, cq["id"], (_msg[:180] if _msg else "Limit harian habis"), show_alert=True)
+                                    except Exception:
+                                        try:
+                                            answer_callback(token, cq["id"], "Limit harian habis", show_alert=True)
+                                        except Exception:
+                                            pass
+                                    try:
+                                        send_message(token, chat_id, _msg or "Limit harian habis.", reply_markup=_kb_lim, parse_mode="HTML")
+                                    except Exception:
+                                        # fallback without parse mode
+                                        send_message(token, chat_id, _msg or "Limit harian habis.", reply_markup=_kb_lim)
+                                    return "OK", 200
+            except Exception as _gate_err:
+                logger.error("SCAN LIMIT GATE error (bot=%s user=%s key=%s): %s", bot_id, uid, key, _gate_err, exc_info=True)
             # ===== END DAILY SCAN LIMIT GATE =====
 
             act = actions_get(bot_id, key)
@@ -4761,12 +4758,12 @@ def telegram_webhook():
                     today = date.today().isoformat()
                     with engine.connect() as conn:
                         usage = conn.execute(
-                            text("SELECT user_id, scan_count FROM scan_daily_usage WHERE bot_id=:b AND day=:d ORDER BY scan_count DESC LIMIT 10"),
+                            text("SELECT user_id, count FROM scan_daily_usage WHERE bot_id=:b AND day=:d ORDER BY count DESC LIMIT 10"),
                             {"b": bot_id, "d": today}
                         ).mappings().all()
                     
                     if usage:
-                        lines = [f"• <code>{u['user_id']}</code>: <b>{u['scan_count']}</b> scans" for u in usage]
+                        lines = [f"• <code>{u['user_id']}</code>: <b>{u['count']}</b> scans" for u in usage]
                         usage_txt = "\n".join(lines)
                     else:
                         usage_txt = "<i>No scans today yet.</i>"
