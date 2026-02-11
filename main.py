@@ -3800,21 +3800,19 @@ def telegram_webhook():
                     return jsonify({"ok": True})
 
                 with engine.begin() as conn:
-                    if is_update:
-                        replace_scanner_games(conn, bot_id, provider, games)
-                    else:
-                        # add without wiping existing
-                        # we'll insert one by one with ON CONFLICT DO NOTHING
-                        conn.execute(
-                            text(
-                                """
-                                INSERT INTO scanner_games (bot_id, provider, game)
-                                VALUES (:bot_id, :provider, :game)
-                                ON CONFLICT DO NOTHING
-                                """
-                            ),
-                            [{"bot_id": bot_id, "provider": provider, "game": g} for g in games],
-                        )
+                    # Both addgames and updategames now MERGE —
+                    # insert new games without deleting existing ones.
+                    # Use /clearscan <provider> to wipe a provider's list first if needed.
+                    conn.execute(
+                        text(
+                            """
+                            INSERT INTO scanner_games (bot_id, provider, game)
+                            VALUES (:bot_id, :provider, :game)
+                            ON CONFLICT DO NOTHING
+                            """
+                        ),
+                        [{"bot_id": bot_id, "provider": provider, "game": g} for g in games],
+                    )
 
                 verb = "dikemaskini" if is_update else "ditambah"
                 tg_send_message(token, chat_id, f"✅ List games <b>{html.escape(provider)}</b> {verb}: <b>{len(games)}</b> item.\n\nNota: Duplicate auto buang. Kalau kurang 20, bot akan paparkan semua.", parse_mode="HTML")
