@@ -1088,7 +1088,7 @@ def build_scanner_caption(firstname: str, provider_label: str, games: List[str])
     # shuffle then top 20
     pool = list(games)
     random.shuffle(pool)
-    chosen = pool[:20]
+    chosen = pool[:30]
     lines_out = []
     lines_out.append(f"<b>{html.escape(firstname)}</b> ini adalah keputusan peratusan scanning <b>{html.escape(provider_label)}</b>")
     lines_out.append("➖➖➖➖➖")
