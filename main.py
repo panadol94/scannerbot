@@ -1115,11 +1115,27 @@ def apply_scan_placeholders(conn, text_: str, bot_row: dict, bot_id: str, user_i
     return out
 
 
-def build_scanner_caption(firstname: str, provider_label: str, games: List[str], member_id: str = "") -> str:
-    """HTML caption — premium scan result."""
+# Cache: last shown games per (bot_id, user_id, provider) to avoid repeats
+_scan_last_games: Dict[tuple, set] = {}
+
+def build_scanner_caption(firstname: str, provider_label: str, games: List[str], member_id: str = "", cache_key: tuple = None) -> str:
+    """HTML caption — premium scan result. Uses cache_key to avoid repeating games."""
     firstname = firstname or "Boss"
     pool = list(games)
     random.shuffle(pool)
+
+    # Avoid repeating games from last scan
+    last_shown = _scan_last_games.get(cache_key, set()) if cache_key else set()
+    if last_shown:
+        # Put previously shown games at the end so new games come first
+        fresh = [g for g in pool if g not in last_shown]
+        stale = [g for g in pool if g in last_shown]
+        random.shuffle(stale)
+        pool = fresh + stale
+        # If all games already shown, reset (full shuffle)
+        if not fresh:
+            random.shuffle(pool)
+            last_shown = set()
 
     # Generate scan ID
     scan_id = f"SC-{random.randint(10000, 99999)}"
@@ -1171,12 +1187,16 @@ def build_scanner_caption(firstname: str, provider_label: str, games: List[str],
             line = f"⚪ {g_esc} — {pct}%"
         if used + len(line) + 1 > budget:
             break
-        chosen.append((line, pct))
+        chosen.append((g, line, pct))
         used += len(line) + 1
 
+    # Save shown games to cache for next scan
+    if cache_key:
+        _scan_last_games[cache_key] = {g for g, _, _ in chosen}
+
     # Stats from chosen games
-    hot_count = sum(1 for _, p in chosen if p >= 80)
-    best_pct = max((p for _, p in chosen), default=0)
+    hot_count = sum(1 for _, _, p in chosen if p >= 80)
+    best_pct = max((p for _, _, p in chosen), default=0)
 
     # Build actual footer
     footer = (
@@ -1186,7 +1206,7 @@ def build_scanner_caption(firstname: str, provider_label: str, games: List[str],
         f"⚠️ <i>Valid 15 minit sahaja</i>"
     )
 
-    lines_out = [header, sep] + [line for line, _ in chosen] + [footer]
+    lines_out = [header, sep] + [line for _, line, _ in chosen] + [footer]
     return "\n".join(lines_out)
 
 
@@ -1202,10 +1222,10 @@ def build_scanner_result_keyboard(provider: str) -> dict:
     }
 
 
-def send_scanner_result(token: str, chat_id: int, firstname: str, provider: str, media: Dict, games: List[str], member_id: str = "") -> None:
+def send_scanner_result(token: str, chat_id: int, firstname: str, provider: str, media: Dict, games: List[str], member_id: str = "", cache_key: tuple = None) -> None:
     provider_clean = norm_provider(provider)
     provider_label = provider_clean.upper() if provider_clean else provider
-    caption = build_scanner_caption(firstname, provider_label, games, member_id=member_id)
+    caption = build_scanner_caption(firstname, provider_label, games, member_id=member_id, cache_key=cache_key)
 
     kb = build_scanner_result_keyboard(provider)
 
@@ -1380,12 +1400,12 @@ def _coerce_media_dict(media):
         return {"media_type": "photo", "file_id": media.strip()}
     return {}
 
-def send_scanner_result_edit(token: str, chat_id: int, message_id: int, firstname: str, provider: str, media, games: List[str], member_id: str = "") -> bool:
+def send_scanner_result_edit(token: str, chat_id: int, message_id: int, firstname: str, provider: str, media, games: List[str], member_id: str = "", cache_key: tuple = None) -> bool:
     """Try to edit current message into scanner result (media+caption). Return True if edited."""
     media = _coerce_media_dict(media)
     provider_clean = norm_provider(provider)
     provider_label = provider_clean.upper() if provider_clean else provider
-    caption = build_scanner_caption(firstname, provider_label, games, member_id=member_id)
+    caption = build_scanner_caption(firstname, provider_label, games, member_id=member_id, cache_key=cache_key)
 
     kb = build_scanner_result_keyboard(provider)
 
@@ -4612,8 +4632,8 @@ def telegram_webhook():
                                 animate_scanning_progress(token, chat_id, message_id, provider=key, cycles=1, delay=0.55)
                             except Exception:
                                 pass
-                            if not send_scanner_result_edit(token, chat_id, message_id, firstname, key, media, games, member_id=_mid):
-                                send_scanner_result(token, chat_id, firstname, key, _coerce_media_dict(media), games, member_id=_mid)
+                            if not send_scanner_result_edit(token, chat_id, message_id, firstname, key, media, games, member_id=_mid, cache_key=(bot_id, uid, key)):
+                                send_scanner_result(token, chat_id, firstname, key, _coerce_media_dict(media), games, member_id=_mid, cache_key=(bot_id, uid, key))
                             return "OK", 200
                 except Exception as e:
                     logger.exception("scanner fallback error: %s", e)
