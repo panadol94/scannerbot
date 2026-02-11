@@ -1118,28 +1118,40 @@ def apply_scan_placeholders(conn, text_: str, bot_row: dict, bot_id: str, user_i
 def build_scanner_caption(firstname: str, provider_label: str, games: List[str]) -> str:
     """HTML caption."""
     firstname = firstname or "Boss"
-    # shuffle then top 20
+    # shuffle then pick games dynamically (respect caption limit)
     pool = list(games)
     random.shuffle(pool)
-    chosen = pool[:30]
-    lines_out = []
-    lines_out.append(f"<b>{html.escape(firstname)}</b> ini adalah keputusan peratusan scanning <b>{html.escape(provider_label)}</b>")
-    lines_out.append("➖➖➖➖➖")
-    for g in chosen:
-        pct = random.randint(34, 95)
-        g_esc = html.escape(g)
-        if pct >= 80:
-            lines_out.append(f"• <b>{g_esc}</b> 🔒 <b>{pct}%</b>")
-        else:
-            lines_out.append(f"• {g_esc} 🔒 {pct}%")
-    # time
+
+    header = f"<b>{html.escape(firstname)}</b> ini adalah keputusan peratusan scanning <b>{html.escape(provider_label)}</b>"
+    sep = "➖➖➖➖➖"
+
+    # Build footer first to know reserved space
     try:
         now_local = datetime.now(LOCAL_TZ) if LOCAL_TZ else datetime.now()
         stamp = now_local.strftime("%d %b %Y %H:%M")
     except Exception:
         stamp = datetime.now().strftime("%d %b %Y %H:%M")
-    lines_out.append("➖➖➖➖➖")
-    lines_out.append(f"🕒 <i>{html.escape(stamp)}</i>")
+    footer = f"{sep}\n🕒 <i>{html.escape(stamp)}</i>"
+
+    # Reserve space for header + separator + footer + newlines
+    reserved = len(header) + len(sep) + len(footer) + 10  # 10 for newlines
+    budget = TG_MAX_CAPTION - reserved  # remaining chars for game lines
+
+    game_lines = []
+    used = 0
+    for g in pool:
+        pct = random.randint(34, 95)
+        g_esc = html.escape(g)
+        if pct >= 80:
+            line = f"• <b>{g_esc}</b> 🔒 <b>{pct}%</b>"
+        else:
+            line = f"• {g_esc} 🔒 {pct}%"
+        if used + len(line) + 1 > budget:  # +1 for newline
+            break
+        game_lines.append(line)
+        used += len(line) + 1
+
+    lines_out = [header, sep] + game_lines + [footer]
     return "\n".join(lines_out)
 
 
