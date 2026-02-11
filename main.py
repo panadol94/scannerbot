@@ -343,6 +343,24 @@ def sanitize_telegram_html(text_: str) -> str:
         return html.escape(tag)
 
     out = re.sub(r"</?[^>]+>", repl, text_)
+
+    # Auto-close unclosed allowed tags (e.g. <i> without </i>)
+    open_stack = []
+    for m2 in re.finditer(r'<(/?)([a-zA-Z0-9\-]+)[^>]*>', out):
+        is_close = m2.group(1) == '/'
+        tag_name = m2.group(2).lower()
+        if tag_name not in _ALLOWED_TAGS:
+            continue
+        if is_close:
+            for i in range(len(open_stack) - 1, -1, -1):
+                if open_stack[i] == tag_name:
+                    open_stack.pop(i)
+                    break
+        else:
+            open_stack.append(tag_name)
+    for unclosed in reversed(open_stack):
+        out += f"</{unclosed}>"
+
     out = _trim(out, TG_MAX_TEXT)
     return out
 
@@ -439,7 +457,22 @@ def tg_call(token: str, method: str, params=None, data=None, files=None):
 
         if not js.get("ok"):
             desc = (js.get("description") or "").lower()
+            code = js.get("error_code")
             if method in ("editMessageText", "editMessageCaption", "editMessageMedia") and "message is not modified" in desc:
+                return None
+            # Suppress noisy but harmless errors to DEBUG
+            if code == 403 and any(x in desc for x in [
+                "bot was blocked", "user is deactivated",
+                "bot can't initiate", "bots can't send",
+            ]):
+                logger.debug(f"TG Skip {method}: {desc}")
+                return None
+            if code == 400 and any(x in desc for x in [
+                "chat not found",
+                "there is no text in the message",
+                "query is too old",
+            ]):
+                logger.debug(f"TG Skip {method}: {desc}")
                 return None
             logger.error(f"TG Error {method}: {js}")
             return None
@@ -1328,10 +1361,19 @@ def send_scanner_result_edit(token: str, chat_id: int, message_id: int, firstnam
     except Exception:
         pass
 
-    # Fallback: text edit
+    # Fallback: text edit (may fail if current message is media)
     try:
         ok = edit_message(token, chat_id, message_id, caption, reply_markup=kb, parse_mode="HTML")
-        return bool(ok)
+        if ok:
+            return True
+    except Exception:
+        pass
+
+    # Last resort: delete old message and send new one
+    try:
+        delete_message(token, chat_id, message_id)
+        send_message(token, chat_id, caption or " ", reply_markup=kb, parse_mode="HTML")
+        return True
     except Exception:
         return False
 
@@ -4556,10 +4598,15 @@ def telegram_webhook():
                     try:
                         edit_media(token, chat_id, message_id, act["type"], act["media_file_id"], caption=txt, reply_markup=markup, parse_mode="HTML")
                     except Exception:
-                        # fallback edit text
-                        edit_message(token, chat_id, message_id, txt or " ", reply_markup=markup, parse_mode="HTML")
+                        # fallback: delete + resend
+                        delete_message(token, chat_id, message_id)
+                        send_message(token, chat_id, txt or " ", reply_markup=markup, parse_mode="HTML")
                 else:
-                    edit_message(token, chat_id, message_id, txt or " ", reply_markup=markup, parse_mode="HTML")
+                    ok = edit_message(token, chat_id, message_id, txt or " ", reply_markup=markup, parse_mode="HTML")
+                    if ok is None:
+                        # Current message is media — can't editMessageText
+                        delete_message(token, chat_id, message_id)
+                        send_message(token, chat_id, txt or " ", reply_markup=markup, parse_mode="HTML")
                 return "OK", 200
 
             # Delay > 0 -> cinematic LOADING then edit back to result using Cloud Tasks
@@ -4598,7 +4645,10 @@ def telegram_webhook():
                         if act2["type"] != "text" and act2.get("media_file_id"):
                             edit_media(token, chat_id, message_id, act2["type"], act2["media_file_id"], caption=t2, reply_markup=mk2, parse_mode="HTML")
                         else:
-                            edit_message(token, chat_id, message_id, t2 or " ", reply_markup=mk2, parse_mode="HTML")
+                            ok = edit_message(token, chat_id, message_id, t2 or " ", reply_markup=mk2, parse_mode="HTML")
+                            if ok is None:
+                                delete_message(token, chat_id, message_id)
+                                send_message(token, chat_id, t2 or " ", reply_markup=mk2, parse_mode="HTML")
                     except Exception:
                         send_message(token, chat_id, t2 or " ", reply_markup=mk2, parse_mode="HTML")
 
