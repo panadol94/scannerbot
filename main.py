@@ -2937,7 +2937,7 @@ def handle_broadcast_optimized(bot_row, chat_id, admin_id, text_msg, reply_msg):
     mt, mid, txt = save_content_from_reply(reply_msg)
     final_txt = (txt + "\n" + btn_conf).strip()
 
-    q = "SELECT user_id FROM users WHERE bot_id=:b"
+    q = "SELECT DISTINCT user_id FROM users WHERE bot_id=:b"
     if target_ver:
         q += " AND is_verified=TRUE"
 
@@ -3472,7 +3472,13 @@ def telegram_webhook():
                     return "OK", 200
 
             if text_msg.startswith("/broadcast") and msg.get("reply_to_message"):
-                handle_broadcast_optimized(bot_row, chat_id, uid, text_msg, msg["reply_to_message"])
+                import threading
+                threading.Thread(
+                    target=handle_broadcast_optimized,
+                    args=(bot_row, chat_id, uid, text_msg, msg["reply_to_message"]),
+                    daemon=True,
+                ).start()
+                return "OK", 200
 
             # JOINLOCK set list
             elif text_msg.startswith("/setjoin"):
