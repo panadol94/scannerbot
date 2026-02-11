@@ -1115,43 +1115,74 @@ def apply_scan_placeholders(conn, text_: str, bot_row: dict, bot_id: str, user_i
     return out
 
 
-def build_scanner_caption(firstname: str, provider_label: str, games: List[str]) -> str:
-    """HTML caption."""
+def build_scanner_caption(firstname: str, provider_label: str, games: List[str], member_id: str = "") -> str:
+    """HTML caption — premium scan result."""
     firstname = firstname or "Boss"
-    # shuffle then pick games dynamically (respect caption limit)
     pool = list(games)
     random.shuffle(pool)
 
-    header = f"<b>{html.escape(firstname)}</b> ini adalah keputusan peratusan scanning <b>{html.escape(provider_label)}</b>"
-    sep = "➖➖➖➖➖"
+    # Generate scan ID
+    scan_id = f"SC-{random.randint(10000, 99999)}"
 
-    # Build footer first to know reserved space
+    # Timestamp
     try:
         now_local = datetime.now(LOCAL_TZ) if LOCAL_TZ else datetime.now()
         stamp = now_local.strftime("%d %b %Y %H:%M")
     except Exception:
         stamp = datetime.now().strftime("%d %b %Y %H:%M")
-    footer = f"{sep}\n🕒 <i>{html.escape(stamp)}</i>"
 
-    # Reserve space for header + separator + footer + newlines
-    reserved = len(header) + len(sep) + len(footer) + 10  # 10 for newlines
-    budget = TG_MAX_CAPTION - reserved  # remaining chars for game lines
+    sep = "━━━━━━━━━━━━━━━━━━"
+    mid_str = f" | 🆔 {html.escape(member_id)}" if member_id else ""
 
-    game_lines = []
+    # Build header
+    header = (
+        f"🔍 <b>SCAN RESULT — {html.escape(provider_label)}</b>\n"
+        f"{sep}\n"
+        f"📋 Scan ID: <code>#{scan_id}</code>\n"
+        f"👤 <b>{html.escape(firstname)}</b>{mid_str}"
+    )
+
+    # Pre-generate percentages for all games to compute stats
+    game_pcts = [(g, random.randint(34, 95)) for g in pool]
+
+    # Build footer with stats (placeholder — will fill after selecting games)
+    # We estimate footer length first
+    footer_template_len = len(sep) + 120  # generous estimate for stats + time + disclaimer
+
+    # Budget for game lines
+    reserved = len(header) + footer_template_len + 10
+    budget = TG_MAX_CAPTION - reserved
+
+    # Pick games within budget
+    chosen = []
     used = 0
-    for g in pool:
-        pct = random.randint(34, 95)
+    for g, pct in game_pcts:
         g_esc = html.escape(g)
         if pct >= 80:
-            line = f"• <b>{g_esc}</b> 🔒 <b>{pct}%</b>"
+            line = f"🏆 <b>{g_esc}</b> — <b>{pct}%</b>"
+        elif pct >= 65:
+            line = f"✅ {g_esc} — {pct}%"
         else:
-            line = f"• {g_esc} 🔒 {pct}%"
-        if used + len(line) + 1 > budget:  # +1 for newline
+            line = f"⚪ {g_esc} — {pct}%"
+        if used + len(line) + 1 > budget:
             break
-        game_lines.append(line)
+        chosen.append((line, pct))
         used += len(line) + 1
 
-    lines_out = [header, sep] + game_lines + [footer]
+    # Stats from chosen games
+    total_scanned = len(pool)
+    hot_count = sum(1 for _, p in chosen if p >= 80)
+    best_pct = max((p for _, p in chosen), default=0)
+
+    # Build footer
+    footer = (
+        f"{sep}\n"
+        f"📊 Scanned: <b>{total_scanned}</b> | 🔥 Hot: <b>{hot_count}</b> | ⚡ Best: <b>{best_pct}%</b>\n"
+        f"🕒 <i>{html.escape(stamp)}</i>\n"
+        f"⚠️ <i>Valid 15 minit sahaja</i>"
+    )
+
+    lines_out = [header, sep] + [line for line, _ in chosen] + [footer]
     return "\n".join(lines_out)
 
 
@@ -1167,10 +1198,10 @@ def build_scanner_result_keyboard(provider: str) -> dict:
     }
 
 
-def send_scanner_result(token: str, chat_id: int, firstname: str, provider: str, media: Dict, games: List[str]) -> None:
+def send_scanner_result(token: str, chat_id: int, firstname: str, provider: str, media: Dict, games: List[str], member_id: str = "") -> None:
     provider_clean = norm_provider(provider)
     provider_label = provider_clean.upper() if provider_clean else provider
-    caption = build_scanner_caption(firstname, provider_label, games)
+    caption = build_scanner_caption(firstname, provider_label, games, member_id=member_id)
 
     kb = build_scanner_result_keyboard(provider)
 
@@ -1345,12 +1376,12 @@ def _coerce_media_dict(media):
         return {"media_type": "photo", "file_id": media.strip()}
     return {}
 
-def send_scanner_result_edit(token: str, chat_id: int, message_id: int, firstname: str, provider: str, media, games: List[str]) -> bool:
+def send_scanner_result_edit(token: str, chat_id: int, message_id: int, firstname: str, provider: str, media, games: List[str], member_id: str = "") -> bool:
     """Try to edit current message into scanner result (media+caption). Return True if edited."""
     media = _coerce_media_dict(media)
     provider_clean = norm_provider(provider)
     provider_label = provider_clean.upper() if provider_clean else provider
-    caption = build_scanner_caption(firstname, provider_label, games)
+    caption = build_scanner_caption(firstname, provider_label, games, member_id=member_id)
 
     kb = build_scanner_result_keyboard(provider)
 
@@ -4571,13 +4602,14 @@ def telegram_webhook():
                                 answer_callback(token, cq["id"], text=f"⏳ Tunggu {remaining}s", show_alert=False)
                                 return "OK", 200
                             firstname = (from_user.get("first_name") or "").strip()
+                            _mid = str((urow_gate or {}).get("member_id") or "")
                             # BM rotation + progress bar (edit in-place)
                             try:
                                 animate_scanning_progress(token, chat_id, message_id, provider=key, cycles=1, delay=0.55)
                             except Exception:
                                 pass
-                            if not send_scanner_result_edit(token, chat_id, message_id, firstname, key, media, games):
-                                send_scanner_result(token, chat_id, firstname, key, _coerce_media_dict(media), games)
+                            if not send_scanner_result_edit(token, chat_id, message_id, firstname, key, media, games, member_id=_mid):
+                                send_scanner_result(token, chat_id, firstname, key, _coerce_media_dict(media), games, member_id=_mid)
                             return "OK", 200
                 except Exception as e:
                     logger.exception("scanner fallback error: %s", e)
