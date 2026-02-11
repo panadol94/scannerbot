@@ -4620,7 +4620,7 @@ def telegram_webhook():
                                     send_message(token, chat_id, txt_lim or " ", reply_markup=kb_lim, parse_mode="HTML")
                                 return "OK", 200
 
-                            remaining = scanner_check_and_touch_cooldown(conn, bot_id, int(uid), key, cooldown_seconds=5)
+                            remaining = scanner_check_and_touch_cooldown(conn, bot_id, int(uid), key, cooldown_seconds=100)
                             if remaining > 0:
                                 # small toast
                                 answer_callback(token, cq["id"], text=f"⏳ Tunggu {remaining}s", show_alert=False)
