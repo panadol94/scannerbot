@@ -4622,8 +4622,8 @@ def telegram_webhook():
 
                             remaining = scanner_check_and_touch_cooldown(conn, bot_id, int(uid), key, cooldown_seconds=100)
                             if remaining > 0:
-                                # small toast
-                                answer_callback(token, cq["id"], text=f"⏳ Tunggu {remaining}s", show_alert=False)
+                                # popup alert so user sees it
+                                answer_callback(token, cq["id"], text=f"⏳ Sila tunggu {remaining} saat sebelum scan semula.", show_alert=True)
                                 return "OK", 200
                             firstname = (from_user.get("first_name") or "").strip()
                             _mid = str((urow_gate or {}).get("member_id") or "")
