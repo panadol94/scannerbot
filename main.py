@@ -1142,15 +1142,20 @@ def build_scanner_caption(firstname: str, provider_label: str, games: List[str],
         f"👤 <b>{html.escape(firstname)}</b>{mid_str}"
     )
 
-    # Pre-generate percentages for all games to compute stats
+    # Pre-generate percentages for all games
     game_pcts = [(g, random.randint(34, 95)) for g in pool]
+    total_scanned = len(pool)
 
-    # Build footer with stats (placeholder — will fill after selecting games)
-    # We estimate footer length first
-    footer_template_len = len(sep) + 120  # generous estimate for stats + time + disclaimer
+    # Build a max-sized footer first to know exact reserved space
+    footer_sample = (
+        f"{sep}\n"
+        f"📊 Scanned: <b>{total_scanned}</b> | 🔥 Hot: <b>99</b> | ⚡ Best: <b>95%</b>\n"
+        f"🕒 <i>{html.escape(stamp)}</i>\n"
+        f"⚠️ <i>Valid 15 minit sahaja</i>"
+    )
 
-    # Budget for game lines
-    reserved = len(header) + footer_template_len + 10
+    # Exact budget: header + sep-divider + footer + newlines between sections
+    reserved = len(header) + 1 + len(sep) + 1 + len(footer_sample) + 1
     budget = TG_MAX_CAPTION - reserved
 
     # Pick games within budget
@@ -1170,11 +1175,10 @@ def build_scanner_caption(firstname: str, provider_label: str, games: List[str],
         used += len(line) + 1
 
     # Stats from chosen games
-    total_scanned = len(pool)
     hot_count = sum(1 for _, p in chosen if p >= 80)
     best_pct = max((p for _, p in chosen), default=0)
 
-    # Build footer
+    # Build actual footer
     footer = (
         f"{sep}\n"
         f"📊 Scanned: <b>{total_scanned}</b> | 🔥 Hot: <b>{hot_count}</b> | ⚡ Best: <b>{best_pct}%</b>\n"
