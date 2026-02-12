@@ -214,11 +214,23 @@ def init_db():
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS join_lock BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS join_targets TEXT;         -- lines: @channel or -100123...
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS join_message TEXT;         -- custom prompt join
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS join_message_media_type TEXT;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS join_message_media_file_id TEXT;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS contact_message TEXT;      -- custom prompt share contact
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS contact_message_media_type TEXT;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS contact_message_media_file_id TEXT;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS pending_message TEXT;      -- after contact, pending approval
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS pending_message_media_type TEXT;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS pending_message_media_file_id TEXT;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS verified_message TEXT;     -- premium approved message
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS verified_message_media_type TEXT;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS verified_message_media_file_id TEXT;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS rejected_message TEXT;     -- premium rejected message
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS rejected_message_media_type TEXT;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS rejected_message_media_file_id TEXT;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS group_contact_message TEXT;-- message to admin group about new contact
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS group_contact_message_media_type TEXT;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS group_contact_message_media_file_id TEXT;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS withdrawal_prompt TEXT;    -- user prompt for withdraw
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS manual_approval BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS inplace_callbacks BOOLEAN NOT NULL DEFAULT FALSE;
