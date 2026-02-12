@@ -1691,7 +1691,12 @@ def ensure_contact_verified(bot_row: dict, chat_id: int, user_row: dict) -> bool
         "one_time_keyboard": True
     }
     msg = bot_row.get("contact_message") or "🔒 <b>BOT DIKUNCI</b>\nSila sahkan nombor telefon anda."
-    send_message(bot_row["token"], chat_id, msg, reply_markup=kb, parse_mode="HTML")
+    mt = bot_row.get("contact_message_media_type")
+    mf = bot_row.get("contact_message_media_file_id")
+    if mt and mf:
+        send_media(bot_row["token"], chat_id, mt, mf, caption=msg, reply_markup=kb, parse_mode="HTML")
+    else:
+        send_message(bot_row["token"], chat_id, msg, reply_markup=kb, parse_mode="HTML")
     return False
 
 
@@ -1716,7 +1721,12 @@ def ensure_premium_if_needed(bot_row: dict, chat_id: int, uid: int, user_row: di
         "Bossku, request kau dah masuk. Tunggu admin approve dulu ya 😘\n"
         "Lepas approve, bot akan bagi akses premium terus."
     )
-    send_message(bot_row["token"], chat_id, msg, parse_mode="HTML")
+    mt = bot_row.get("pending_message_media_type")
+    mf = bot_row.get("pending_message_media_file_id")
+    if mt and mf:
+        send_media(bot_row["token"], chat_id, mt, mf, caption=msg, parse_mode="HTML")
+    else:
+        send_message(bot_row["token"], chat_id, msg, parse_mode="HTML")
 
     # 2) Notify admin/owner with Approve/Reject buttons
     try:
@@ -4662,7 +4672,12 @@ def telegram_webhook():
                     "Akses kau dah unlock ✅\n"
                     "Sekarang boleh guna semua menu premium 🔥"
                 )
-                send_message(token, target_uid, msg_user, parse_mode="HTML")
+                _vmt = bot_row.get("verified_message_media_type")
+                _vmf = bot_row.get("verified_message_media_file_id")
+                if _vmt and _vmf:
+                    send_media(token, target_uid, _vmt, _vmf, caption=msg_user, parse_mode="HTML")
+                else:
+                    send_message(token, target_uid, msg_user, parse_mode="HTML")
 
                 # Update mesej admin dengan nama approver + lock button
                 try:
@@ -4705,7 +4720,12 @@ def telegram_webhook():
                     "❌ <b>PREMIUM DITOLAK</b>\n"
                     "Bossku, admin tolak request. Kalau silap, boleh try semula."
                 )
-                send_message(token, target_uid, msg_user, parse_mode="HTML")
+                _rmt = bot_row.get("rejected_message_media_type")
+                _rmf = bot_row.get("rejected_message_media_file_id")
+                if _rmt and _rmf:
+                    send_media(token, target_uid, _rmt, _rmf, caption=msg_user, parse_mode="HTML")
+                else:
+                    send_message(token, target_uid, msg_user, parse_mode="HTML")
 
                 # Update mesej admin dengan nama rej actor + lock button
                 try:
