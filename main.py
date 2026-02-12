@@ -688,11 +688,15 @@ def livegram_handle_admin_reply(bot_row, msg):
     bot_id = str(bot_row["id"])
     reply = msg.get("reply_to_message")
     if not reply:
+        logger.info("LIVEGRAM-REPLY: no reply_to_message")
         return False
 
     replied_msg_id = reply.get("message_id")
     if not replied_msg_id:
+        logger.info("LIVEGRAM-REPLY: no message_id in reply")
         return False
+
+    logger.info("LIVEGRAM-REPLY: looking up fwd_msg_id=%s bot_id=%s", replied_msg_id, bot_id)
 
     # Also check if the reply is to a header message (which replies to the forwarded msg)
     # Try the replied message ID first, then the message it was replying to
@@ -716,10 +720,12 @@ def livegram_handle_admin_reply(bot_row, msg):
         return False
 
     if not row:
+        logger.info("LIVEGRAM-REPLY: no mapping found for ids=%s", ids_to_check)
         return False
 
     dest_chat = int(row["source_chat_id"])
     dest_msg = row.get("source_message_id")
+    logger.info("LIVEGRAM-REPLY: found! dest_chat=%s dest_msg=%s", dest_chat, dest_msg)
 
     # Copy admin reply to the source chat
     copy_data = {
@@ -3685,7 +3691,10 @@ def telegram_webhook():
 
         # LIVEGRAM: detect admin reply in admin group → route back to user
         admin_gid = bot_row.get("admin_group_id")
+        logger.info("LIVEGRAM-DEBUG: chat_id=%s admin_gid=%s livegram=%s has_reply=%s",
+                    chat_id, admin_gid, bot_row.get("livegram"), bool(msg.get("reply_to_message")))
         if admin_gid and chat_id == int(admin_gid) and bot_row.get("livegram") and msg.get("reply_to_message"):
+            logger.info("LIVEGRAM-DEBUG: admin reply detected, calling handler")
             if livegram_handle_admin_reply(bot_row, msg):
                 return "OK", 200
 
