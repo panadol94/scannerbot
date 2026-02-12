@@ -3844,10 +3844,7 @@ def telegram_webhook():
                 
                 # Verification Messages
                 elif action == "joinmsg":
-                    if not msg.get("reply_to_message"):
-                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
-                        return "OK", 200
-                    rep = msg["reply_to_message"]
+                    rep = msg.get("reply_to_message") or msg
                     mt, mid, txt = save_content_from_reply(rep)
                     with engine.begin() as conn:
                         conn.execute(text("UPDATE bots SET join_message=:t, join_message_media_type=:mt, join_message_media_file_id=:mf WHERE id=:i"),
@@ -3857,10 +3854,7 @@ def telegram_webhook():
                     return "OK", 200
                 
                 elif action == "contactmsg":
-                    if not msg.get("reply_to_message"):
-                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
-                        return "OK", 200
-                    rep = msg["reply_to_message"]
+                    rep = msg.get("reply_to_message") or msg
                     mt, mid, txt = save_content_from_reply(rep)
                     with engine.begin() as conn:
                         conn.execute(text("UPDATE bots SET contact_message=:t, contact_message_media_type=:mt, contact_message_media_file_id=:mf WHERE id=:i"),
@@ -3870,10 +3864,7 @@ def telegram_webhook():
                     return "OK", 200
                 
                 elif action == "pendingmsg":
-                    if not msg.get("reply_to_message"):
-                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
-                        return "OK", 200
-                    rep = msg["reply_to_message"]
+                    rep = msg.get("reply_to_message") or msg
                     mt, mid, txt = save_content_from_reply(rep)
                     with engine.begin() as conn:
                         conn.execute(text("UPDATE bots SET pending_message=:t, pending_message_media_type=:mt, pending_message_media_file_id=:mf WHERE id=:i"),
@@ -3883,10 +3874,7 @@ def telegram_webhook():
                     return "OK", 200
                 
                 elif action == "verifiedmsg":
-                    if not msg.get("reply_to_message"):
-                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
-                        return "OK", 200
-                    rep = msg["reply_to_message"]
+                    rep = msg.get("reply_to_message") or msg
                     mt, mid, txt = save_content_from_reply(rep)
                     with engine.begin() as conn:
                         conn.execute(text("UPDATE bots SET verified_message=:t, verified_message_media_type=:mt, verified_message_media_file_id=:mf WHERE id=:i"),
@@ -3896,10 +3884,7 @@ def telegram_webhook():
                     return "OK", 200
                 
                 elif action == "rejectedmsg":
-                    if not msg.get("reply_to_message"):
-                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
-                        return "OK", 200
-                    rep = msg["reply_to_message"]
+                    rep = msg.get("reply_to_message") or msg
                     mt, mid, txt = save_content_from_reply(rep)
                     with engine.begin() as conn:
                         conn.execute(text("UPDATE bots SET rejected_message=:t, rejected_message_media_type=:mt, rejected_message_media_file_id=:mf WHERE id=:i"),
@@ -3909,10 +3894,7 @@ def telegram_webhook():
                     return "OK", 200
                 
                 elif action == "groupcontactmsg":
-                    if not msg.get("reply_to_message"):
-                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
-                        return "OK", 200
-                    rep = msg["reply_to_message"]
+                    rep = msg.get("reply_to_message") or msg
                     mt, mid, txt = save_content_from_reply(rep)
                     with engine.begin() as conn:
                         conn.execute(text("UPDATE bots SET group_contact_message=:t, group_contact_message_media_type=:mt, group_contact_message_media_file_id=:mf WHERE id=:i"),
