@@ -3631,8 +3631,8 @@ def telegram_webhook():
                 send_message(token, chat_id, "👥 <b>ADMINS</b>\n" + "\n".join(lines), parse_mode="HTML")
 
         elif text_msg.startswith("/addadmin"):
-            if not is_owner(uid, bot_row):
-                send_message(token, chat_id, "❌ Owner sahaja boleh /addadmin", parse_mode="HTML")
+            if not require_admin(bot_row, uid):
+                send_message(token, chat_id, "❌ Owner/Admin sahaja boleh /addadmin", parse_mode="HTML")
             else:
                 parts = text_msg.split()
                 if len(parts) < 2 or not parts[1].isdigit():
