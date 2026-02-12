@@ -1911,6 +1911,28 @@ def clone_bot_data(source_bot_id: str, target_bot_id: str, chat_id: int = 0) -> 
             logger.info("CLONE SRC %s = %s", _f, repr(_v)[:120] if _v else "NULL")
         # Log all column names from source to spot unexpected fields
         logger.info("CLONE SRC columns: %s", list(src.keys()))
+        # Check for duplicate bot rows with same username
+        _src_uname = (src.get("bot_username") or "").lower()
+        if _src_uname:
+            _dup_rows = conn.execute(
+                text("SELECT id, start_text, start_media_type FROM bots WHERE LOWER(bot_username)=:u"),
+                {"u": _src_uname},
+            ).mappings().all()
+            logger.info("CLONE: found %d rows for username '%s'", len(_dup_rows), _src_uname)
+            for _dr in _dup_rows:
+                logger.info("  row id=%s start_text=%s media=%s",
+                            _dr["id"], repr(_dr.get("start_text"))[:80] if _dr.get("start_text") else "NULL",
+                            _dr.get("start_media_type") or "NULL")
+            # If our source has no start_text but another row does, use that
+            if not src.get("start_text"):
+                for _dr in _dup_rows:
+                    if _dr.get("start_text") and str(_dr["id"]) != str(source_bot_id):
+                        _better_id = str(_dr["id"])
+                        logger.info("CLONE: switching source to id=%s (has start_text!)", _better_id)
+                        src = conn.execute(text("SELECT * FROM bots WHERE id=:i"), {"i": _better_id}).mappings().first()
+                        source_bot_id = _better_id
+                        src_token = src["token"]
+                        break
 
         # Re-upload bot-level media file_ids
         params = {f"_{c}": src.get(c) for c in CLONE_COLS}
