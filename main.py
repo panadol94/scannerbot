@@ -1765,6 +1765,7 @@ def build_withdraw_insufficient_msg(min_wd: float, bal: float) -> str:
 # ---------------------------
 # CLONE BOT DATA
 # ---------------------------
+_clone_in_progress: set = set()  # in-memory guard against duplicate clone runs
 def _reupload_file_id(src_token: str, dst_token: str, dst_chat_id: int, file_id: str, media_type: str) -> str:
     """
     Download file from source bot and re-upload to target bot.
@@ -3528,6 +3529,11 @@ def telegram_webhook():
                     elif int(source_bot["owner_id"]) != uid:
                         send_message(token, chat_id, "❌ Kau bukan owner bot source tu.", parse_mode="HTML")
                     else:
+                        # Prevent duplicate clone runs (Telegram may retry)
+                        _clone_key = f"{bot_id}"
+                        if _clone_key in _clone_in_progress:
+                            return "OK", 200
+                        _clone_in_progress.add(_clone_key)
                         send_message(token, chat_id, "⏳ Cloning data... sila tunggu (media sedang di-transfer).", parse_mode="HTML")
                         # Run clone in background thread to avoid webhook timeout
                         import threading
@@ -3553,6 +3559,8 @@ def telegram_webhook():
                             except Exception as e:
                                 logger.error("Clone error: %s", e)
                                 send_message(token, chat_id, f"❌ Clone error: {e}", parse_mode="HTML")
+                            finally:
+                                _clone_in_progress.discard(_clone_key)
                         threading.Thread(target=_do_clone, daemon=True).start()
                     return "OK", 200
 
