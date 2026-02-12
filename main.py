@@ -2880,7 +2880,7 @@ def build_settings_category_nav(active: str = "home"):
     }
 
 
-def build_settings_keyboard_by_category(cat: str, page: int, pages: int):
+def build_settings_keyboard_by_category(bot_row: dict, cat: str, page: int, pages: int):
     """Category sub-menu keyboard with focused actions and Back button."""
     cat = (cat or "").lower().strip()
     kb = {"inline_keyboard": []}
@@ -2996,10 +2996,10 @@ def build_settings_keyboard_by_category(cat: str, page: int, pages: int):
     return kb
 
 
-def build_settings_keyboard(page: int, pages: int, cat: Optional[str] = None):
+def build_settings_keyboard(bot_row: dict, page: int, pages: int, cat: Optional[str] = None):
     """Default keyboard: show category nav menu. If cat given, show sub-menu."""
     if cat:
-        return build_settings_keyboard_by_category(cat, page, pages)
+        return build_settings_keyboard_by_category(bot_row, cat, page, pages)
     return build_settings_category_nav()
 def send_or_edit_settings_panel(bot_row: dict, chat_id: int, uid: int, page: int = 1, edit_ctx: Optional[dict] = None, cat: Optional[str] = None):
     bot_id = str(bot_row["id"])
@@ -3008,7 +3008,7 @@ def send_or_edit_settings_panel(bot_row: dict, chat_id: int, uid: int, page: int
     text_panel, pages = build_settings_text(bot_row, stats, cb_total, cb_rows, page, SETTINGS_CB_PAGE_SIZE)
     if cat:
         text_panel = f"🗂️ <b>Settings Category:</b> <code>{html.escape(str(cat))}</code>\n━━━━━━━━━━━━━━━━━━\n" + text_panel
-    kb = build_settings_keyboard(page, pages, cat=cat)
+    kb = build_settings_keyboard(bot_row, page, pages, cat=cat)
 
     token = bot_row["token"]
     if edit_ctx and edit_ctx.get("message_id"):
