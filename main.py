@@ -1769,7 +1769,9 @@ def _reupload_file_id(src_token: str, dst_token: str, dst_chat_id: int, file_id:
     """
     Download file from source bot and re-upload to target bot.
     Returns new file_id valid for target bot, or original file_id on failure.
+    Handles Telegram 429 rate-limit with retry.
     """
+    import time as _time
     if not file_id or not media_type:
         return file_id
     try:
@@ -1791,10 +1793,10 @@ def _reupload_file_id(src_token: str, dst_token: str, dst_chat_id: int, file_id:
         )
         if dl.status_code != 200:
             return file_id
-        fdata = BytesIO(dl.content)
-        fdata.name = file_path.split("/")[-1] or "file"
+        file_bytes = dl.content
+        fname = file_path.split("/")[-1] or "file"
 
-        # 3) Re-upload to target bot via owner's chat
+        # 3) Re-upload to target bot via owner's chat (with retry on 429)
         method_map = {"photo": "sendPhoto", "video": "sendVideo",
                       "animation": "sendAnimation", "document": "sendDocument"}
         field_map = {"photo": "photo", "video": "video",
@@ -1802,15 +1804,32 @@ def _reupload_file_id(src_token: str, dst_token: str, dst_chat_id: int, file_id:
         method = method_map.get(media_type, "sendDocument")
         field = field_map.get(media_type, "document")
 
-        up = SESSION.post(
-            f"https://api.telegram.org/bot{dst_token}/{method}",
-            data={"chat_id": dst_chat_id, "disable_notification": True},
-            files={field: (fdata.name, fdata)},
-            timeout=60,
-        )
-        up_js = up.json()
-        if not up_js.get("ok"):
-            logger.warning("clone re-upload failed: %s", up_js.get("description"))
+        up_js = None
+        for attempt in range(4):  # max 4 attempts
+            fdata = BytesIO(file_bytes)
+            fdata.name = fname
+            up = SESSION.post(
+                f"https://api.telegram.org/bot{dst_token}/{method}",
+                data={"chat_id": dst_chat_id, "disable_notification": True},
+                files={field: (fdata.name, fdata)},
+                timeout=60,
+            )
+            up_js = up.json()
+            if up_js.get("ok"):
+                break
+            # Handle 429 Too Many Requests
+            desc = (up_js.get("description") or "").lower()
+            retry_after = up_js.get("parameters", {}).get("retry_after")
+            if up_js.get("error_code") == 429 or "too many requests" in desc:
+                wait = int(retry_after or 5) + 1
+                logger.info("clone re-upload rate-limited, waiting %ds (attempt %d)", wait, attempt + 1)
+                _time.sleep(wait)
+                continue
+            else:
+                logger.warning("clone re-upload failed: %s", up_js.get("description"))
+                return file_id
+
+        if not up_js or not up_js.get("ok"):
             return file_id
 
         # 4) Extract new file_id + delete temp message
@@ -3510,24 +3529,32 @@ def telegram_webhook():
                         send_message(token, chat_id, "❌ Kau bukan owner bot source tu.", parse_mode="HTML")
                     else:
                         send_message(token, chat_id, "⏳ Cloning data... sila tunggu (media sedang di-transfer).", parse_mode="HTML")
-                        result = clone_bot_data(str(source_bot["id"]), bot_id, chat_id=chat_id)
-                        if "error" in result:
-                            send_message(token, chat_id, f"❌ Error: {result['error']}", parse_mode="HTML")
-                        else:
-                            src_name = source_bot.get("bot_username") or str(source_bot["id"])[:8]
-                            send_message(token, chat_id,
-                                f"✅ <b>CLONE BERJAYA!</b>\n\n"
-                                f"Data dari <code>@{_h(src_name)}</code> telah di-copy.\n\n"
-                                f"📊 <b>Summary:</b>\n"
-                                f"• Scanner media: <b>{result['media']}</b> provider\n"
-                                f"• Game list: <b>{result['games']}</b> games\n"
-                                f"• Custom actions: <b>{result['actions']}</b> items\n"
-                                f"• Media re-uploaded: <b>{result.get('reuploaded', 0)}</b> files\n"
-                                f"• Bot settings: ✅ updated\n\n"
-                                f"Taip /settings untuk check.",
-                                parse_mode="HTML",
-                            )
-
+                        # Run clone in background thread to avoid webhook timeout
+                        import threading
+                        def _do_clone():
+                            try:
+                                result = clone_bot_data(str(source_bot["id"]), bot_id, chat_id=chat_id)
+                                if "error" in result:
+                                    send_message(token, chat_id, f"❌ Error: {result['error']}", parse_mode="HTML")
+                                else:
+                                    src_name = source_bot.get("bot_username") or str(source_bot["id"])[:8]
+                                    send_message(token, chat_id,
+                                        f"✅ <b>CLONE BERJAYA!</b>\n\n"
+                                        f"Data dari <code>@{_h(src_name)}</code> telah di-copy.\n\n"
+                                        f"📊 <b>Summary:</b>\n"
+                                        f"• Scanner media: <b>{result['media']}</b> provider\n"
+                                        f"• Game list: <b>{result['games']}</b> games\n"
+                                        f"• Custom actions: <b>{result['actions']}</b> items\n"
+                                        f"• Media re-uploaded: <b>{result.get('reuploaded', 0)}</b> files\n"
+                                        f"• Bot settings: ✅ updated\n\n"
+                                        f"Taip /settings untuk check.",
+                                        parse_mode="HTML",
+                                    )
+                            except Exception as e:
+                                logger.error("Clone error: %s", e)
+                                send_message(token, chat_id, f"❌ Clone error: {e}", parse_mode="HTML")
+                        threading.Thread(target=_do_clone, daemon=True).start()
+                    return "OK", 200
 
         # NEW admin commands (owner only untuk add/del)
         elif text_msg.startswith("/admins") and require_admin(bot_row, uid):
