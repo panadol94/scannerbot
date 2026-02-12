@@ -790,7 +790,7 @@ def render_placeholders(text_: str, bot_username: str, user_row: dict) -> str:
 
 
 def make_share_query(bot_username: str, user_row: dict) -> str:
-    return render_placeholders("Jom buat duit! [link]", bot_username, user_row)
+    return render_placeholders("🤫 Rahsia pemain pro — scan RTP real-time + FREE credit untuk kau! Cuba sekarang 🔥\n[link]", bot_username, user_row)
 
 
 # ---------------------------
