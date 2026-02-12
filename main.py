@@ -3941,41 +3941,59 @@ def telegram_webhook():
                     conn.execute(text("UPDATE bots SET join_targets=:t WHERE id=:i"), {"t": raw, "i": bot_id})
                 send_message(token, chat_id, "✅ join_targets updated.", parse_mode="HTML")
 
-            elif text_msg.startswith("/setjoinmsg") and msg.get("reply_to_message"):
-                raw = (msg["reply_to_message"].get("text") or msg["reply_to_message"].get("caption") or "").strip()
-                with engine.begin() as conn:
-                    conn.execute(text("UPDATE bots SET join_message=:t WHERE id=:i"), {"t": raw, "i": bot_id})
-                send_message(token, chat_id, "✅ join_message updated.", parse_mode="HTML")
+            elif text_msg.startswith("/setjoinmsg"):
+                if not msg.get("reply_to_message"):
+                    send_message(token, chat_id, "❌ Reply ke mesej yang kau nak jadikan <b>JoinLock message</b>, kemudian tulis <code>/setjoinmsg</code>", parse_mode="HTML")
+                else:
+                    raw = (msg["reply_to_message"].get("text") or msg["reply_to_message"].get("caption") or "").strip()
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET join_message=:t WHERE id=:i"), {"t": raw, "i": bot_id})
+                    send_message(token, chat_id, "✅ join_message updated.", parse_mode="HTML")
 
-            elif text_msg.startswith("/setcontactmsg") and msg.get("reply_to_message"):
-                raw = (msg["reply_to_message"].get("text") or msg["reply_to_message"].get("caption") or "").strip()
-                with engine.begin() as conn:
-                    conn.execute(text("UPDATE bots SET contact_message=:t WHERE id=:i"), {"t": raw, "i": bot_id})
-                send_message(token, chat_id, "✅ contact_message updated.", parse_mode="HTML")
+            elif text_msg.startswith("/setcontactmsg"):
+                if not msg.get("reply_to_message"):
+                    send_message(token, chat_id, "❌ Reply ke mesej yang kau nak jadikan <b>Contact Request message</b>, kemudian tulis <code>/setcontactmsg</code>", parse_mode="HTML")
+                else:
+                    raw = (msg["reply_to_message"].get("text") or msg["reply_to_message"].get("caption") or "").strip()
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET contact_message=:t WHERE id=:i"), {"t": raw, "i": bot_id})
+                    send_message(token, chat_id, "✅ contact_message updated.", parse_mode="HTML")
 
-            elif text_msg.startswith("/setpendingmsg") and msg.get("reply_to_message"):
-                raw = (msg["reply_to_message"].get("text") or msg["reply_to_message"].get("caption") or "").strip()
-                with engine.begin() as conn:
-                    conn.execute(text("UPDATE bots SET pending_message=:t WHERE id=:i"), {"t": raw, "i": bot_id})
-                send_message(token, chat_id, "✅ pending_message updated.", parse_mode="HTML")
+            elif text_msg.startswith("/setpendingmsg"):
+                if not msg.get("reply_to_message"):
+                    send_message(token, chat_id, "❌ Reply ke mesej yang kau nak jadikan <b>Pending message</b>, kemudian tulis <code>/setpendingmsg</code>", parse_mode="HTML")
+                else:
+                    raw = (msg["reply_to_message"].get("text") or msg["reply_to_message"].get("caption") or "").strip()
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET pending_message=:t WHERE id=:i"), {"t": raw, "i": bot_id})
+                    send_message(token, chat_id, "✅ pending_message updated.", parse_mode="HTML")
 
-            elif text_msg.startswith("/setverifiedmsg") and msg.get("reply_to_message"):
-                raw = (msg["reply_to_message"].get("text") or msg["reply_to_message"].get("caption") or "").strip()
-                with engine.begin() as conn:
-                    conn.execute(text("UPDATE bots SET verified_message=:t WHERE id=:i"), {"t": raw, "i": bot_id})
-                send_message(token, chat_id, "✅ verified_message updated.", parse_mode="HTML")
+            elif text_msg.startswith("/setverifiedmsg"):
+                if not msg.get("reply_to_message"):
+                    send_message(token, chat_id, "❌ Reply ke mesej yang kau nak jadikan <b>Verified message</b>, kemudian tulis <code>/setverifiedmsg</code>", parse_mode="HTML")
+                else:
+                    raw = (msg["reply_to_message"].get("text") or msg["reply_to_message"].get("caption") or "").strip()
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET verified_message=:t WHERE id=:i"), {"t": raw, "i": bot_id})
+                    send_message(token, chat_id, "✅ verified_message updated.", parse_mode="HTML")
 
-            elif text_msg.startswith("/setrejectedmsg") and msg.get("reply_to_message"):
-                raw = (msg["reply_to_message"].get("text") or msg["reply_to_message"].get("caption") or "").strip()
-                with engine.begin() as conn:
-                    conn.execute(text("UPDATE bots SET rejected_message=:t WHERE id=:i"), {"t": raw, "i": bot_id})
-                send_message(token, chat_id, "✅ rejected_message updated.", parse_mode="HTML")
+            elif text_msg.startswith("/setrejectedmsg"):
+                if not msg.get("reply_to_message"):
+                    send_message(token, chat_id, "❌ Reply ke mesej yang kau nak jadikan <b>Rejected message</b>, kemudian tulis <code>/setrejectedmsg</code>", parse_mode="HTML")
+                else:
+                    raw = (msg["reply_to_message"].get("text") or msg["reply_to_message"].get("caption") or "").strip()
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET rejected_message=:t WHERE id=:i"), {"t": raw, "i": bot_id})
+                    send_message(token, chat_id, "✅ rejected_message updated.", parse_mode="HTML")
 
-            elif text_msg.startswith("/setgroupcontactmsg") and msg.get("reply_to_message"):
-                raw = (msg["reply_to_message"].get("text") or msg["reply_to_message"].get("caption") or "").strip()
-                with engine.begin() as conn:
-                    conn.execute(text("UPDATE bots SET group_contact_message=:t WHERE id=:i"), {"t": raw, "i": bot_id})
-                send_message(token, chat_id, "✅ group_contact_message updated.", parse_mode="HTML")
+            elif text_msg.startswith("/setgroupcontactmsg"):
+                if not msg.get("reply_to_message"):
+                    send_message(token, chat_id, "❌ Reply ke mesej yang kau nak jadikan <b>Group Contact message</b>, kemudian tulis <code>/setgroupcontactmsg</code>", parse_mode="HTML")
+                else:
+                    raw = (msg["reply_to_message"].get("text") or msg["reply_to_message"].get("caption") or "").strip()
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET group_contact_message=:t WHERE id=:i"), {"t": raw, "i": bot_id})
+                    send_message(token, chat_id, "✅ group_contact_message updated.", parse_mode="HTML")
 
             elif text_msg.startswith("/setwithdrawmsg") and msg.get("reply_to_message"):
                 raw = (msg["reply_to_message"].get("text") or msg["reply_to_message"].get("caption") or "").strip()
