@@ -4087,7 +4087,10 @@ def telegram_webhook():
                     send_message(token, chat_id, f"✅ Set scan limit GLOBAL: <b>{lim_i}</b>/hari", parse_mode="HTML")
                 return "OK", 200
 
-            elif cmd == "/setscanlimitmsg" and msg.get("reply_to_message"):
+            elif text_msg.startswith("/setscanlimitmsg"):
+                if not msg.get("reply_to_message"):
+                    send_message(token, chat_id, "❌ Sila REPLY pada media/text yang nak dijadikan scan limit message.", parse_mode="HTML")
+                    return "OK", 200
                 logger.info(f"[CMD] /setscanlimitmsg uid={uid} chat={chat_id} text={text_msg}")
                 # Custom message when user hits daily scan limit (supports text/media from reply)
                 rep = msg["reply_to_message"]
