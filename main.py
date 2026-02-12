@@ -4598,7 +4598,7 @@ def telegram_webhook():
         # Catch-all: if user in private chat hasn't verified contact, re-prompt
         if msg.get("chat", {}).get("type") == "private" and not require_admin(bot_row, uid):
             urow = get_user_row(bot_id, uid)
-            if bot_row.get("phone_lock") and (not urow or not urow.get("is_verified")):
+            if bot_row.get("lock_bot") and (not urow or not urow.get("is_verified")):
                 ensure_contact_verified(bot_row, chat_id, urow)
                 return "OK", 200
 
