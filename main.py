@@ -309,6 +309,22 @@ def init_db():
     ALTER TABLE bots 
       ALTER COLUMN scan_limit_per_day TYPE BIGINT USING scan_limit_per_day::BIGINT;
 
+    -- ----------------------------
+    -- LIVEGRAM (forward user msgs to admin group, admin replies go back)
+    -- ----------------------------
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS livegram BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS livegram_scope TEXT DEFAULT 'private'; -- 'private' or 'all'
+
+    CREATE TABLE IF NOT EXISTS livegram_messages (
+      bot_id UUID NOT NULL,
+      fwd_message_id BIGINT NOT NULL,
+      source_chat_id BIGINT NOT NULL,
+      source_user_id BIGINT NOT NULL,
+      source_message_id BIGINT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      PRIMARY KEY (bot_id, fwd_message_id)
+    );
+
 """
     with engine.begin() as conn:
         _exec_ddl_multi(conn, ddl)
@@ -619,6 +635,129 @@ def answer_callback(token, callback_query_id, text_=None, show_alert=False):
     if text_:
         data["text"] = text_
     return tg_call(token, "answerCallbackQuery", data=data)
+
+
+# ---------------------------
+# LIVEGRAM HELPERS
+# ---------------------------
+def livegram_forward_to_admin(bot_row, msg):
+    """Forward a user message to the admin group and save the mapping."""
+    token = bot_row["token"]
+    bot_id = str(bot_row["id"])
+    admin_chat = bot_row.get("admin_group_id")
+    if not admin_chat:
+        admin_chat = bot_row.get("owner_id")
+    if not admin_chat:
+        return
+    admin_chat = int(admin_chat)
+
+    from_user = msg.get("from") or {}
+    uid = from_user.get("id")
+    fname = from_user.get("first_name") or "?"
+    uname = from_user.get("username")
+    source_chat_id = msg["chat"]["id"]
+    source_msg_id = msg.get("message_id")
+    chat_type = msg.get("chat", {}).get("type", "private")
+
+    # Build header
+    user_link = f"@{uname}" if uname else f'<a href="tg://user?id={uid}">{html.escape(fname)}</a>'
+    if chat_type == "private":
+        header = f"💬 <b>LIVEGRAM</b>\n👤 {user_link} | <code>{uid}</code>"
+    else:
+        chat_title = msg.get("chat", {}).get("title") or "Group"
+        header = (
+            f"💬 <b>LIVEGRAM (Group)</b>\n"
+            f"👤 {user_link} | <code>{uid}</code>\n"
+            f"📍 {html.escape(chat_title)} (<code>{source_chat_id}</code>)"
+        )
+
+    # Forward the original message first
+    fwd_result = tg_call(token, "forwardMessage", data={
+        "chat_id": admin_chat,
+        "from_chat_id": source_chat_id,
+        "message_id": source_msg_id,
+    })
+
+    fwd_msg_id = None
+    if fwd_result and fwd_result.get("ok"):
+        fwd_msg_id = fwd_result["result"]["message_id"]
+
+    # Send header as reply to forwarded message
+    header_data = {"chat_id": admin_chat, "text": header, "parse_mode": "HTML"}
+    if fwd_msg_id:
+        header_data["reply_to_message_id"] = fwd_msg_id
+    tg_call(token, "sendMessage", data=header_data)
+
+    # Save mapping
+    if fwd_msg_id:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "INSERT INTO livegram_messages (bot_id, fwd_message_id, source_chat_id, source_user_id, source_message_id) "
+                    "VALUES (:b, :fwd, :sc, :su, :sm) ON CONFLICT DO NOTHING"
+                ), {"b": bot_id, "fwd": fwd_msg_id, "sc": source_chat_id, "su": uid, "sm": source_msg_id})
+        except Exception as e:
+            logger.error("Livegram save mapping error: %s", e)
+
+
+def livegram_handle_admin_reply(bot_row, msg):
+    """If admin replies to a forwarded livegram message in admin group, send reply back to source."""
+    token = bot_row["token"]
+    bot_id = str(bot_row["id"])
+    reply = msg.get("reply_to_message")
+    if not reply:
+        return False
+
+    replied_msg_id = reply.get("message_id")
+    if not replied_msg_id:
+        return False
+
+    # Also check if the reply is to a header message (which replies to the forwarded msg)
+    # Try the replied message ID first, then the message it was replying to
+    ids_to_check = [replied_msg_id]
+    if reply.get("reply_to_message"):
+        ids_to_check.append(reply["reply_to_message"].get("message_id"))
+
+    row = None
+    try:
+        with engine.connect() as conn:
+            for check_id in ids_to_check:
+                if check_id:
+                    row = conn.execute(text(
+                        "SELECT source_chat_id, source_user_id, source_message_id "
+                        "FROM livegram_messages WHERE bot_id=:b AND fwd_message_id=:fwd"
+                    ), {"b": bot_id, "fwd": check_id}).mappings().first()
+                    if row:
+                        break
+    except Exception as e:
+        logger.error("Livegram lookup error: %s", e)
+        return False
+
+    if not row:
+        return False
+
+    dest_chat = int(row["source_chat_id"])
+    dest_msg = row.get("source_message_id")
+
+    # Copy admin reply to the source chat
+    copy_data = {
+        "chat_id": dest_chat,
+        "from_chat_id": msg["chat"]["id"],
+        "message_id": msg["message_id"],
+    }
+    if dest_msg:
+        copy_data["reply_to_message_id"] = int(dest_msg)
+    result = tg_call(token, "copyMessage", data=copy_data)
+
+    # Confirm to admin
+    if result and result.get("ok"):
+        tg_call(token, "sendMessage", data={
+            "chat_id": msg["chat"]["id"],
+            "text": "✅ Reply terhantar!",
+            "reply_to_message_id": msg["message_id"],
+        })
+
+    return True
 
 
 # TEXT/BTN HELPERS
@@ -2834,8 +2973,15 @@ def build_settings_keyboard_by_category(cat: str, page: int, pages: int):
         ])
 
     elif cat == "utils":
+        lg_on = bot_row.get("livegram", False)
+        lg_scope = bot_row.get("livegram_scope") or "private"
+        lg_status = "🟢 ON" if lg_on else "🔴 OFF"
+        lg_scope_label = "📨 All (Private+Group)" if lg_scope == "all" else "📨 Private Only"
+
         kb["inline_keyboard"].extend([
             [{"text": "🔧 UTILITIES", "callback_data": "st:noop"}],
+            [{"text": f"💬 Livegram: {lg_status}", "callback_data": f"st:livegram:{'off' if lg_on else 'on'}"}],
+            [{"text": lg_scope_label, "callback_data": f"st:livegram:scope:{'private' if lg_scope == 'all' else 'all'}"}],
             [{"text": "📚 All Commands Help", "callback_data": "st:help:all"}],
             [{"text": "🧠 Full Placeholders", "callback_data": "st:placeholders:full"}],
             [{"text": "📖 How: Broadcast", "callback_data": "st:how:broadcast"},
@@ -3554,6 +3700,12 @@ def telegram_webhook():
 
         if not uid:
             return "OK", 200
+
+        # LIVEGRAM: detect admin reply in admin group → route back to user
+        admin_gid = bot_row.get("admin_group_id")
+        if admin_gid and chat_id == int(admin_gid) and bot_row.get("livegram") and msg.get("reply_to_message"):
+            if livegram_handle_admin_reply(bot_row, msg):
+                return "OK", 200
 
         # IMPORTANT: handle /start with referral BEFORE creating user row without upline
         if text_msg and text_msg.startswith("/start"):
@@ -4596,11 +4748,21 @@ def telegram_webhook():
                         send_message(token, chat_id, txt, reply_markup=markup)
 
         # Catch-all: if user in private chat hasn't verified contact, re-prompt
-        if msg.get("chat", {}).get("type") == "private" and not require_admin(bot_row, uid):
+        chat_type = msg.get("chat", {}).get("type", "private")
+        if chat_type == "private" and not require_admin(bot_row, uid):
             urow = get_user_row(bot_id, uid)
             if bot_row.get("lock_bot") and (not urow or not urow.get("is_verified")):
                 ensure_contact_verified(bot_row, chat_id, urow)
                 return "OK", 200
+
+        # LIVEGRAM: forward user messages to admin group
+        if bot_row.get("livegram") and not require_admin(bot_row, uid):
+            scope = bot_row.get("livegram_scope") or "private"
+            admin_gid = bot_row.get("admin_group_id")
+            is_admin_group = admin_gid and chat_id == int(admin_gid)
+            if not is_admin_group:  # don't forward admin group's own messages
+                if chat_type == "private" or scope == "all":
+                    livegram_forward_to_admin(bot_row, msg)
 
         return "OK", 200
 
@@ -5204,6 +5366,22 @@ def telegram_webhook():
                 answer_callback(token, cq["id"], f"{col} set: {val}")
                 bot_row2 = get_bot_by_id(bot_id) or bot_row
                 send_or_edit_settings_panel(bot_row2, chat_id, uid, page=1, edit_ctx={"message_id": message_id})
+                return "OK", 200
+
+            if action == "livegram":
+                sub = parts[2] if len(parts) > 2 else ""
+                if sub == "scope":
+                    new_scope = parts[3] if len(parts) > 3 else "private"
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET livegram_scope=:v WHERE id=:i"), {"v": new_scope, "i": bot_id})
+                    answer_callback(token, cq["id"], f"Livegram scope: {new_scope}")
+                else:
+                    val = (sub == "on")
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET livegram=:v WHERE id=:i"), {"v": val, "i": bot_id})
+                    answer_callback(token, cq["id"], f"Livegram {'ON ✅' if val else 'OFF ❌'}")
+                bot_row2 = get_bot_by_id(bot_id) or bot_row
+                send_or_edit_settings_panel(bot_row2, chat_id, uid, page=1, edit_ctx={"message_id": message_id}, cat="utils")
                 return "OK", 200
 
             if action == "admingroup":
