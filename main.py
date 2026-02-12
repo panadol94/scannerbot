@@ -1776,7 +1776,7 @@ def clone_bot_data(source_bot_id: str, target_bot_id: str) -> dict:
     CLONE_COLS = [
         "start_text", "start_media_type", "start_media_file_id",
         "loading_text", "loading_media_type", "loading_media_file_id",
-        "lock_bot", "join_lock", "join_targets", "join_message",
+        "join_message",
         "contact_message", "pending_message", "verified_message", "rejected_message",
         "group_contact_message", "withdrawal_prompt",
         "manual_approval", "inplace_callbacks",
@@ -1793,7 +1793,7 @@ def clone_bot_data(source_bot_id: str, target_bot_id: str) -> dict:
         if not src:
             return {"error": "Source bot not found"}
 
-        sets = ", ".join(f"{c}=:_{c}" for c in CLONE_COLS if src.get(c) is not None or c in ("lock_bot", "join_lock", "manual_approval", "inplace_callbacks"))
+        sets = ", ".join(f"{c}=:_{c}" for c in CLONE_COLS if src.get(c) is not None or c in ("manual_approval", "inplace_callbacks"))
         params = {f"_{c}": src.get(c) for c in CLONE_COLS}
         params["_tid"] = target_bot_id
         if sets:
@@ -3004,7 +3004,10 @@ def handle_start(bot_row, chat_id, user, text_msg):
 
     mt, mid = bot_row.get("start_media_type"), bot_row.get("start_media_file_id")
     if mt and mid:
-        send_media(token, chat_id, mt, mid, caption=final_text, reply_markup=markup)
+        res = send_media(token, chat_id, mt, mid, caption=final_text, reply_markup=markup)
+        if res is None:
+            # Media failed (e.g. invalid file_id after clone) → fallback to text
+            send_message(token, chat_id, final_text, reply_markup=markup)
     else:
         send_message(token, chat_id, final_text, reply_markup=markup)
 
