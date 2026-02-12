@@ -2488,51 +2488,24 @@ def build_settings_text(bot_row: dict, stats: dict, cb_total: int, cb_rows: list
     txt = (
         "⚙️ <b>ADMIN CONTROL PANEL</b>\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        f"🤖 <b>{username}</b>\n"
-        f"🆔 <code>{bot_id}</code>\n"
+        f"🤖 <b>@{username}</b>\n"
         "\n"
         "📊 <b>QUICK STATS</b>\n"
-        f"👥 Users: <b>{stats['total_users']}</b>\n"
+        f"👥 Users: <b>{stats['total_users']}</b> | "
         f"✅ Verified: <b>{stats['verified_users']}</b> ({verified_pct}%)\n"
-        f"💎 Premium: <b>{stats['premium_users']}</b>\n"
+        f"💎 Premium: <b>{stats['premium_users']}</b> | "
         f"💰 Pending WD: <b>{stats['pending_withdrawals']}</b>\n"
         "\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "💰 <b>FINANCIAL SETTINGS</b>\n"
-        f"• Share Commission: <b>RM{share_amt:.2f}</b> per click\n"
-        f"• Min Withdraw: <b>RM{min_wd:.2f}</b>\n"
-        "\n"
-        "🎰 <b>SCAN CONFIGURATION</b>\n"
-        f"• Daily Limit: {scan_status}\n"
-        "\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "🔐 <b>SECURITY & ACCESS</b>\n"
-        f"• JoinLock: {lock_join}\n"
-        f"• PhoneLock: {lock_phone}\n"
-        f"• Manual Approval: {manual}\n"
-        f"• Admin Group: {adming_txt}\n"
-        "\n"
-        "⚙️ <b>BOT FEATURES</b>\n"
-        f"• Inplace Callbacks: {inplace}\n"
-        f"• Base URL: {base_url_txt}\n"
+        "⚡ <b>CURRENT STATUS</b>\n"
+        f"🧲 JoinLock: {lock_join} | 🔒 PhoneLock: {lock_phone}\n"
+        f"✅ Manual: {manual} | 🧩 Inplace: {inplace}\n"
+        f"💵 Share: <b>RM{share_amt:.2f}</b> | 🏧 Min WD: <b>RM{min_wd:.2f}</b>\n"
+        f"🎰 Scan Limit: {scan_status}\n"
+        f"🧩 Callbacks: <b>{cb_total}</b>\n"
         "\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        f"🧩 <b>CALLBACKS/ACTIONS</b> (Page {page}/{pages})\n"
-    )
-    
-    # Show callbacks list
-    if cb_rows:
-        for r in cb_rows:
-            txt += f"• <code>{r['key']}</code> ({r['type']}, {int(r['delay_seconds'] or 0)}s)\n"
-    else:
-        txt += "<i>No callbacks yet.</i>\n"
-    
-    txt += (
-        "\n"
-        "━━━━━━━━━━━━━━━━━━\n"
-        "📁 Use buttons below to manage\n"
-        "\n"
-        f"{HELP_PLACEHOLDERS_SHORT}\n"
+        "📁 <i>Pilih kategori di bawah untuk manage</i>\n"
     )
     
     return txt, pages
@@ -2707,93 +2680,148 @@ def build_settings_keyboard_full(page: int, pages: int):
 
 def build_settings_category_nav(active: str = "home"):
     def lab(key, label):
-        return f"✅ {label}" if key == active else label
+        return f"👉 {label}" if key == active else label
 
     return {
         "inline_keyboard": [
             [
-                {"text": lab("economy", "💰 Economy"), "callback_data": "st:cat:economy"},
-                {"text": lab("withdraw", "🏧 Withdraw"), "callback_data": "st:cat:withdraw"},
+                {"text": lab("content", "📝 Content"), "callback_data": "st:cat:content"},
+                {"text": lab("security", "🔐 Security"), "callback_data": "st:cat:security"},
             ],
             [
-                {"text": lab("message", "💬 Message"), "callback_data": "st:cat:message"},
-                {"text": lab("admin", "🛡️ Admin"), "callback_data": "st:cat:admin"},
+                {"text": lab("economy", "💰 Financial"), "callback_data": "st:cat:economy"},
+                {"text": lab("scanner", "🎰 Scanner"), "callback_data": "st:cat:scanner"},
             ],
             [
-                {"text": lab("callback", "🧩 Callback"), "callback_data": "st:cat:callback"},
+                {"text": lab("withdraw", "✉️ Withdrawal"), "callback_data": "st:cat:withdraw"},
+                {"text": lab("verify", "📢 Verification"), "callback_data": "st:cat:verify"},
+            ],
+            [
+                {"text": lab("callback", "🧩 Callbacks"), "callback_data": "st:cat:callback"},
+                {"text": lab("data", "📊 Data & Export"), "callback_data": "st:cat:data"},
+            ],
+            [
+                {"text": "🔧 Utilities", "callback_data": "st:cat:utils"},
                 {"text": "🔄 Refresh", "callback_data": "st:refresh:1"},
-            ],
-            [
-                {"text": "🧱 Full Panel", "callback_data": "st:full:1"},
             ],
         ]
     }
 
 
 def build_settings_keyboard_by_category(cat: str, page: int, pages: int):
-    """Category keyboard. Keep actions minimal to avoid breaking other flows."""
+    """Category sub-menu keyboard with focused actions and Back button."""
     cat = (cat or "").lower().strip()
-    nav = build_settings_category_nav(active=cat)
     kb = {"inline_keyboard": []}
 
-    # NAV on top
-    kb["inline_keyboard"].extend(nav["inline_keyboard"])
+    if cat == "content":
+        kb["inline_keyboard"].extend([
+            [{"text": "📝 CONTENT MANAGEMENT", "callback_data": "st:noop"}],
+            [{"text": "✏️ Edit START Message", "callback_data": "st:content:editstart"},
+             {"text": "✏️ Edit LOADING Message", "callback_data": "st:content:editloading"}],
+            [{"text": "📌 Preview START", "callback_data": "st:preview:start"},
+             {"text": "⏳ Preview LOADING", "callback_data": "st:preview:loading"}],
+            [{"text": "📖 How: /setstart", "callback_data": "st:how:setstart"},
+             {"text": "📖 How: /setloading", "callback_data": "st:how:setloading"}],
+        ])
 
-    # Category-specific quick actions
-    if cat == "economy":
+    elif cat == "security":
         kb["inline_keyboard"].extend([
-            [{"text": "💵 How Set RM/Share", "callback_data": "st:how:setshareamt"}],
-        ])
-    elif cat == "withdraw":
-        kb["inline_keyboard"].extend([
-            [{"text": "🏧 How Set Min Withdraw", "callback_data": "st:how:setminwithdraw"}],
-            [{"text": "✅ ManualApprove ON", "callback_data": "st:manual:on"},
-             {"text": "✅ ManualApprove OFF", "callback_data": "st:manual:off"}],
-        ])
-    elif cat == "message":
-        kb["inline_keyboard"].extend([
-            [{"text": "📝 How Set Withdrawal Msg", "callback_data": "st:how:setwithdrawalmsg"}],
-            [{"text": "📝 How Set Reject Msg", "callback_data": "st:how:setwithdrawalreject"}],
-            [{"text": "📝 How Set Pending Msg", "callback_data": "st:how:setpendingmsg"}],
-            [{"text": "📝 How Set Rejected Msg", "callback_data": "st:how:setrejectedmsg"}],
-            [{"text": "📝 How Set Verified Msg", "callback_data": "st:how:setverifiedmsg"}],
-            [{"text": "📝 How Set Contact Msg", "callback_data": "st:how:setcontactmsg"}],
-            [{"text": "📝 How Set Group Contact Msg", "callback_data": "st:how:setgroupcontactmsg"}],
-        ])
-    elif cat == "admin":
-        kb["inline_keyboard"].extend([
-            [{"text": "👥 Set Admin Group (dalam GROUP)", "callback_data": "st:admingroup:set"}],
-            [{"text": "🔐 Lock Bot", "callback_data": "st:how:setlockbot"}],
+            [{"text": "🔐 SECURITY & ACCESS", "callback_data": "st:noop"}],
             [{"text": "🧲 JoinLock ON", "callback_data": "st:join:on"},
              {"text": "🧲 JoinLock OFF", "callback_data": "st:join:off"}],
             [{"text": "🔒 PhoneLock ON", "callback_data": "st:lock:on"},
              {"text": "🔓 PhoneLock OFF", "callback_data": "st:lock:off"}],
+            [{"text": "✅ Manual Approve ON", "callback_data": "st:manual:on"},
+             {"text": "❌ Manual Approve OFF", "callback_data": "st:manual:off"}],
+            [{"text": "👥 Set Admin Group", "callback_data": "st:admingroup:set"}],
+            [{"text": "📖 How: JoinLock", "callback_data": "st:how:joinlock"},
+             {"text": "📖 How: Manual", "callback_data": "st:how:manualapprove"}],
         ])
+
+    elif cat == "economy":
+        kb["inline_keyboard"].extend([
+            [{"text": "💰 FINANCIAL SETTINGS", "callback_data": "st:noop"}],
+            [{"text": "💵 View Rates", "callback_data": "st:financial:viewrates"}],
+            [{"text": "✏️ Edit Share Amount", "callback_data": "st:financial:setshare"},
+             {"text": "✏️ Edit Min Withdraw", "callback_data": "st:financial:setminwd"}],
+        ])
+
+    elif cat == "scanner":
+        kb["inline_keyboard"].extend([
+            [{"text": "🎰 SCANNER MANAGEMENT", "callback_data": "st:noop"}],
+            [{"text": "⚙️ Set Global Limit", "callback_data": "st:scan:setglobal"}],
+            [{"text": "📊 View Usage", "callback_data": "st:scan:viewusage"},
+             {"text": "🔄 Reset Usage", "callback_data": "st:scan:reset"}],
+            [{"text": "✏️ Custom Limit Msg", "callback_data": "st:scan:editmsg"}],
+            [{"text": "📖 How: Add Scanner", "callback_data": "st:how:addscanner"},
+             {"text": "📖 How: Add Games", "callback_data": "st:how:addgames"}],
+        ])
+
+    elif cat == "withdraw":
+        kb["inline_keyboard"].extend([
+            [{"text": "✉️ WITHDRAWAL MESSAGES", "callback_data": "st:noop"}],
+            [{"text": "✏️ Edit Request Msg", "callback_data": "st:withdrawal:editrequest"}],
+            [{"text": "✏️ Edit Approve Msg", "callback_data": "st:withdrawal:editapprove"},
+             {"text": "✏️ Edit Reject Msg", "callback_data": "st:withdrawal:editreject"}],
+        ])
+
+    elif cat == "verify":
+        kb["inline_keyboard"].extend([
+            [{"text": "📢 VERIFICATION MESSAGES", "callback_data": "st:noop"}],
+            [{"text": "✏️ JoinLock Msg", "callback_data": "st:verify:editjoin"},
+             {"text": "✏️ Contact Request", "callback_data": "st:verify:editcontact"}],
+            [{"text": "✏️ Pending Msg", "callback_data": "st:verify:editpending"},
+             {"text": "✏️ Verified Msg", "callback_data": "st:verify:editverified"}],
+            [{"text": "✏️ Rejected Msg", "callback_data": "st:verify:editrejected"},
+             {"text": "✏️ Group Contact", "callback_data": "st:verify:editgroupcontact"}],
+        ])
+
     elif cat == "callback":
         prev_page = page - 1 if page > 1 else 1
         next_page = page + 1 if page < pages else pages
         kb["inline_keyboard"].extend([
+            [{"text": "🧩 CALLBACKS / ACTIONS", "callback_data": "st:noop"}],
             [{"text": "🧩 Inplace ON", "callback_data": "st:inplace:on"},
              {"text": "🧩 Inplace OFF", "callback_data": "st:inplace:off"}],
-            [{"text": "🧩 How CALLBACK", "callback_data": "st:how:callback"},
-             {"text": "🧷 How SETCOMMAND", "callback_data": "st:how:setcommand"}],
+            [{"text": "📖 How: Callback", "callback_data": "st:how:callback"},
+             {"text": "📖 How: Command", "callback_data": "st:how:setcommand"}],
             [{"text": "🗑 Delete Callback", "callback_data": "st:cbdelmenu:1"}],
             [{"text": "⬅️ Prev", "callback_data": f"st:cbpage:{prev_page}"},
-             {"text": f"📄 Page {page}/{pages}", "callback_data": "st:noop"},
+             {"text": f"📄 {page}/{pages}", "callback_data": "st:noop"},
              {"text": "Next ➡️", "callback_data": f"st:cbpage:{next_page}"}],
         ])
-    else:
-        # Home
-        kb["inline_keyboard"].append([{"text": "👉 Pilih kategori atas", "callback_data": "st:noop"}])
+
+    elif cat == "data":
+        kb["inline_keyboard"].extend([
+            [{"text": "📊 DATA & EXPORT", "callback_data": "st:noop"}],
+            [{"text": "📤 Export ALL Users", "callback_data": "st:export:all"},
+             {"text": "✅ Export VERIFIED", "callback_data": "st:export:verified"}],
+            [{"text": "📃 My Bots", "callback_data": "st:mybots:0"}],
+            [{"text": "📋 Clone Bot", "callback_data": "st:how:clone"}],
+        ])
+
+    elif cat == "utils":
+        kb["inline_keyboard"].extend([
+            [{"text": "🔧 UTILITIES", "callback_data": "st:noop"}],
+            [{"text": "📚 All Commands Help", "callback_data": "st:help:all"}],
+            [{"text": "🧠 Full Placeholders", "callback_data": "st:placeholders:full"}],
+            [{"text": "📖 How: Broadcast", "callback_data": "st:how:broadcast"},
+             {"text": "📖 How: AddBot", "callback_data": "st:how:addbot"}],
+        ])
+
+    # Always add Back button
+    kb["inline_keyboard"].append([
+        {"text": "⬅️ Kembali ke Menu", "callback_data": "st:refresh:1"},
+    ])
 
     return kb
 
 
 def build_settings_keyboard(page: int, pages: int, cat: Optional[str] = None):
-    """Default keyboard: categories (if cat given) else full keyboard."""
+    """Default keyboard: show category nav menu. If cat given, show sub-menu."""
     if cat:
         return build_settings_keyboard_by_category(cat, page, pages)
-    return build_settings_keyboard_full(page, pages)
+    return build_settings_category_nav()
 def send_or_edit_settings_panel(bot_row: dict, chat_id: int, uid: int, page: int = 1, edit_ctx: Optional[dict] = None, cat: Optional[str] = None):
     bot_id = str(bot_row["id"])
     stats = get_bot_stats(bot_id)
