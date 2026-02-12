@@ -668,8 +668,8 @@ def livegram_forward_to_admin(bot_row, msg):
     logger.info("LIVEGRAM-FWD: result=%s", fwd_result)
 
     fwd_msg_id = None
-    if fwd_result and fwd_result.get("ok"):
-        fwd_msg_id = fwd_result["result"]["message_id"]
+    if fwd_result and fwd_result.get("message_id"):
+        fwd_msg_id = fwd_result["message_id"]
 
     # Save mapping
     logger.info("LIVEGRAM-FWD: fwd_msg_id=%s bot_id=%s source_chat=%s source_user=%s",
@@ -738,7 +738,7 @@ def livegram_handle_admin_reply(bot_row, msg):
     result = tg_call(token, "copyMessage", data=copy_data)
 
     # Confirm to admin
-    if result and result.get("ok"):
+    if result:
         tg_call(token, "sendMessage", data={
             "chat_id": msg["chat"]["id"],
             "text": "✅ Reply terhantar!",
