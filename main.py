@@ -1464,6 +1464,18 @@ def get_bot_by_token(token_: str):
         return conn.execute(text("SELECT * FROM bots WHERE token=:t"), {"t": token_}).mappings().first()
 
 
+def get_bot_by_username(username: str):
+    """Lookup bot by @username (case-insensitive, strips @)."""
+    u = (username or "").strip().lstrip("@").lower()
+    if not u:
+        return None
+    with engine.connect() as conn:
+        return conn.execute(
+            text("SELECT * FROM bots WHERE LOWER(bot_username)=:u"),
+            {"u": u},
+        ).mappings().first()
+
+
 def list_bots_by_owner(owner_id: int):
     with engine.connect() as conn:
         return conn.execute(
@@ -1749,6 +1761,87 @@ def build_withdraw_insufficient_msg(min_wd: float, bal: float) -> str:
         f"Minimum Withdraw: {min_wd:.2f}\n"
         f"Commission Balance: {bal:.2f}"
     )
+
+# ---------------------------
+# CLONE BOT DATA
+# ---------------------------
+def clone_bot_data(source_bot_id: str, target_bot_id: str) -> dict:
+    """
+    Clone setup/content from source bot to target bot.
+    Copies: bot config, scanner_media, scanner_games, actions.
+    Does NOT copy: users, referral data, withdrawals, scan usage.
+    Returns summary dict with counts.
+    """
+    # Columns to clone from bots table (config/content only, not identity)
+    CLONE_COLS = [
+        "start_text", "start_media_type", "start_media_file_id",
+        "loading_text", "loading_media_type", "loading_media_file_id",
+        "lock_bot", "join_lock", "join_targets", "join_message",
+        "contact_message", "pending_message", "verified_message", "rejected_message",
+        "group_contact_message", "withdrawal_prompt",
+        "manual_approval", "inplace_callbacks",
+        "affiliate_amount", "min_withdraw_amount",
+        "scan_limit_per_day", "scan_limit_message",
+        "scan_limit_message_media_type", "scan_limit_message_media_file_id",
+        "withdrawal_approve_message", "withdrawal_approve_media_type", "withdrawal_approve_media_file_id",
+        "withdrawal_reject_message", "withdrawal_reject_media_type", "withdrawal_reject_media_file_id",
+    ]
+
+    with engine.begin() as conn:
+        # 1) Copy bot config columns
+        src = conn.execute(text("SELECT * FROM bots WHERE id=:i"), {"i": source_bot_id}).mappings().first()
+        if not src:
+            return {"error": "Source bot not found"}
+
+        sets = ", ".join(f"{c}=:_{c}" for c in CLONE_COLS if src.get(c) is not None or c in ("lock_bot", "join_lock", "manual_approval", "inplace_callbacks"))
+        params = {f"_{c}": src.get(c) for c in CLONE_COLS}
+        params["_tid"] = target_bot_id
+        if sets:
+            conn.execute(text(f"UPDATE bots SET {sets} WHERE id=:_tid"), params)
+
+        # 2) Clone scanner_media
+        conn.execute(text("DELETE FROM scanner_media WHERE bot_id=:b"), {"b": target_bot_id})
+        media_rows = conn.execute(
+            text("SELECT provider, media_type, file_id FROM scanner_media WHERE bot_id=:b"),
+            {"b": source_bot_id},
+        ).mappings().all()
+        for m in media_rows:
+            conn.execute(
+                text("INSERT INTO scanner_media (bot_id, provider, media_type, file_id, updated_at) VALUES (:b, :p, :mt, :fid, NOW())"),
+                {"b": target_bot_id, "p": m["provider"], "mt": m["media_type"], "fid": m["file_id"]},
+            )
+
+        # 3) Clone scanner_games
+        conn.execute(text("DELETE FROM scanner_games WHERE bot_id=:b"), {"b": target_bot_id})
+        game_rows = conn.execute(
+            text("SELECT provider, game FROM scanner_games WHERE bot_id=:b"),
+            {"b": source_bot_id},
+        ).mappings().all()
+        for g in game_rows:
+            conn.execute(
+                text("INSERT INTO scanner_games (bot_id, provider, game) VALUES (:b, :p, :g)"),
+                {"b": target_bot_id, "p": g["provider"], "g": g["game"]},
+            )
+
+        # 4) Clone actions (custom commands/callbacks)
+        conn.execute(text("DELETE FROM actions WHERE bot_id=:b"), {"b": target_bot_id})
+        action_rows = conn.execute(
+            text("SELECT key, type, text, media_file_id, delay_seconds FROM actions WHERE bot_id=:b"),
+            {"b": source_bot_id},
+        ).mappings().all()
+        for a in action_rows:
+            conn.execute(
+                text("INSERT INTO actions (bot_id, key, type, text, media_file_id, delay_seconds) VALUES (:b, :k, :t, :tx, :mf, :d)"),
+                {"b": target_bot_id, "k": a["key"], "t": a["type"], "tx": a["text"], "mf": a["media_file_id"], "d": a["delay_seconds"]},
+            )
+
+    return {
+        "media": len(media_rows),
+        "games": len(game_rows),
+        "actions": len(action_rows),
+    }
+
+
 # ---------------------------
 # ADMIN MANAGEMENT
 # ---------------------------
@@ -3272,6 +3365,58 @@ def telegram_webhook():
 
         elif text_msg.startswith("/addbot") and require_admin(bot_row, uid):
             handle_addbot_start(bot_row, chat_id, uid)
+
+        elif text_msg.startswith("/clone"):
+            if not is_owner(uid, bot_row):
+                send_message(token, chat_id, "❌ Owner sahaja boleh /clone", parse_mode="HTML")
+            else:
+                parts = text_msg.split(maxsplit=1)
+                if len(parts) < 2 or not parts[1].strip():
+                    send_message(token, chat_id,
+                        "📋 <b>CLONE DATA</b>\n\n"
+                        "Copy setup/content dari bot lain ke bot ini.\n\n"
+                        "<b>Cara guna:</b>\n"
+                        "<code>/clone @usernamebot</code>\n\n"
+                        "<b>Data yang di-clone:</b>\n"
+                        "• Start message & loading message\n"
+                        "• Scanner media & game list\n"
+                        "• Custom commands/callbacks\n"
+                        "• Bot settings (joinlock, referral, dll)\n\n"
+                        "<b>Data yang TIDAK di-clone:</b>\n"
+                        "• Users / contacts\n"
+                        "• Referral balance\n"
+                        "• Withdrawals & scan history",
+                        parse_mode="HTML",
+                    )
+                else:
+                    target_username = parts[1].strip()
+                    source_bot = get_bot_by_username(target_username)
+                    if not source_bot:
+                        send_message(token, chat_id,
+                            f"❌ Bot <code>{_h(target_username)}</code> tidak dijumpai dalam sistem.",
+                            parse_mode="HTML",
+                        )
+                    elif str(source_bot["id"]) == bot_id:
+                        send_message(token, chat_id, "⚠️ Tak boleh clone dari bot yang sama.", parse_mode="HTML")
+                    elif int(source_bot["owner_id"]) != uid:
+                        send_message(token, chat_id, "❌ Kau bukan owner bot source tu.", parse_mode="HTML")
+                    else:
+                        result = clone_bot_data(str(source_bot["id"]), bot_id)
+                        if "error" in result:
+                            send_message(token, chat_id, f"❌ Error: {result['error']}", parse_mode="HTML")
+                        else:
+                            src_name = source_bot.get("bot_username") or str(source_bot["id"])[:8]
+                            send_message(token, chat_id,
+                                f"✅ <b>CLONE BERJAYA!</b>\n\n"
+                                f"Data dari <code>@{_h(src_name)}</code> telah di-copy.\n\n"
+                                f"📊 <b>Summary:</b>\n"
+                                f"• Scanner media: <b>{result['media']}</b> provider\n"
+                                f"• Game list: <b>{result['games']}</b> games\n"
+                                f"• Custom actions: <b>{result['actions']}</b> items\n"
+                                f"• Bot settings: ✅ updated\n\n"
+                                f"Taip /settings untuk check.",
+                                parse_mode="HTML",
+                            )
 
         # NEW admin commands (owner only untuk add/del)
         elif text_msg.startswith("/admins") and require_admin(bot_row, uid):
