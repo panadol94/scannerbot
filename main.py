@@ -5133,6 +5133,14 @@ def telegram_webhook():
             parts = data.split(":")
             action = parts[1] if len(parts) > 1 else ""
 
+            # Category navigation: st:cat:content, st:cat:security, etc.
+            if action == "cat":
+                cat_name = parts[2] if len(parts) > 2 else ""
+                answer_callback(token, cq["id"])
+                bot_row2 = get_bot_by_id(bot_id) or bot_row
+                send_or_edit_settings_panel(bot_row2, chat_id, uid, page=1, edit_ctx={"message_id": message_id}, cat=cat_name)
+                return "OK", 200
+
             if action in ("lock", "join", "manual", "inplace"):
                 val = (parts[2] == "on") if len(parts) > 2 else False
                 col = {
