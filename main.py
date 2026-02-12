@@ -1765,9 +1765,83 @@ def build_withdraw_insufficient_msg(min_wd: float, bal: float) -> str:
 # ---------------------------
 # CLONE BOT DATA
 # ---------------------------
-def clone_bot_data(source_bot_id: str, target_bot_id: str) -> dict:
+def _reupload_file_id(src_token: str, dst_token: str, dst_chat_id: int, file_id: str, media_type: str) -> str:
+    """
+    Download file from source bot and re-upload to target bot.
+    Returns new file_id valid for target bot, or original file_id on failure.
+    """
+    if not file_id or not media_type:
+        return file_id
+    try:
+        # 1) getFile from source bot
+        r = SESSION.post(
+            f"https://api.telegram.org/bot{src_token}/getFile",
+            data={"file_id": file_id}, timeout=15,
+        )
+        js = r.json()
+        if not js.get("ok"):
+            logger.warning("clone getFile failed: %s", js.get("description"))
+            return file_id
+        file_path = js["result"]["file_path"]
+
+        # 2) Download file bytes
+        dl = SESSION.get(
+            f"https://api.telegram.org/file/bot{src_token}/{file_path}",
+            timeout=30,
+        )
+        if dl.status_code != 200:
+            return file_id
+        fdata = BytesIO(dl.content)
+        fdata.name = file_path.split("/")[-1] or "file"
+
+        # 3) Re-upload to target bot via owner's chat
+        method_map = {"photo": "sendPhoto", "video": "sendVideo",
+                      "animation": "sendAnimation", "document": "sendDocument"}
+        field_map = {"photo": "photo", "video": "video",
+                     "animation": "animation", "document": "document"}
+        method = method_map.get(media_type, "sendDocument")
+        field = field_map.get(media_type, "document")
+
+        up = SESSION.post(
+            f"https://api.telegram.org/bot{dst_token}/{method}",
+            data={"chat_id": dst_chat_id, "disable_notification": True},
+            files={field: (fdata.name, fdata)},
+            timeout=60,
+        )
+        up_js = up.json()
+        if not up_js.get("ok"):
+            logger.warning("clone re-upload failed: %s", up_js.get("description"))
+            return file_id
+
+        # 4) Extract new file_id + delete temp message
+        result = up_js["result"]
+        try:
+            SESSION.post(
+                f"https://api.telegram.org/bot{dst_token}/deleteMessage",
+                data={"chat_id": dst_chat_id, "message_id": result["message_id"]},
+                timeout=5,
+            )
+        except Exception:
+            pass
+
+        if media_type == "photo":
+            photos = result.get("photo") or []
+            return photos[-1]["file_id"] if photos else file_id
+        elif media_type == "video":
+            return (result.get("video") or {}).get("file_id") or file_id
+        elif media_type == "animation":
+            return (result.get("animation") or {}).get("file_id") or file_id
+        else:
+            return (result.get("document") or {}).get("file_id") or file_id
+    except Exception as e:
+        logger.error("clone _reupload_file_id error: %s", e)
+        return file_id
+
+
+def clone_bot_data(source_bot_id: str, target_bot_id: str, chat_id: int = 0) -> dict:
     """
     Clone setup/content from source bot to target bot.
+    Re-uploads all media so file_ids are valid for the target bot.
     Copies: bot config, scanner_media, scanner_games, actions.
     Does NOT copy: users, referral data, withdrawals, scan usage.
     Returns summary dict with counts.
@@ -1786,30 +1860,56 @@ def clone_bot_data(source_bot_id: str, target_bot_id: str) -> dict:
         "withdrawal_approve_message", "withdrawal_approve_media_type", "withdrawal_approve_media_file_id",
         "withdrawal_reject_message", "withdrawal_reject_media_type", "withdrawal_reject_media_file_id",
     ]
+    # Pairs of (media_type_col, file_id_col) that need re-upload
+    MEDIA_PAIRS = [
+        ("start_media_type", "start_media_file_id"),
+        ("loading_media_type", "loading_media_file_id"),
+        ("scan_limit_message_media_type", "scan_limit_message_media_file_id"),
+        ("withdrawal_approve_media_type", "withdrawal_approve_media_file_id"),
+        ("withdrawal_reject_media_type", "withdrawal_reject_media_file_id"),
+    ]
 
     with engine.begin() as conn:
-        # 1) Copy bot config columns
+        # 1) Fetch source & target bot rows
         src = conn.execute(text("SELECT * FROM bots WHERE id=:i"), {"i": source_bot_id}).mappings().first()
         if not src:
             return {"error": "Source bot not found"}
+        tgt = conn.execute(text("SELECT * FROM bots WHERE id=:i"), {"i": target_bot_id}).mappings().first()
+        if not tgt:
+            return {"error": "Target bot not found"}
+
+        src_token = src["token"]
+        dst_token = tgt["token"]
+        reup_count = 0
+
+        # Re-upload bot-level media file_ids
+        params = {f"_{c}": src.get(c) for c in CLONE_COLS}
+        for mt_col, fid_col in MEDIA_PAIRS:
+            mt_val = src.get(mt_col)
+            fid_val = src.get(fid_col)
+            if mt_val and fid_val:
+                new_fid = _reupload_file_id(src_token, dst_token, chat_id, fid_val, mt_val)
+                params[f"_{fid_col}"] = new_fid
+                reup_count += 1
 
         sets = ", ".join(f"{c}=:_{c}" for c in CLONE_COLS if src.get(c) is not None or c in ("manual_approval", "inplace_callbacks"))
-        params = {f"_{c}": src.get(c) for c in CLONE_COLS}
         params["_tid"] = target_bot_id
         if sets:
             conn.execute(text(f"UPDATE bots SET {sets} WHERE id=:_tid"), params)
 
-        # 2) Clone scanner_media
+        # 2) Clone scanner_media (re-upload each)
         conn.execute(text("DELETE FROM scanner_media WHERE bot_id=:b"), {"b": target_bot_id})
         media_rows = conn.execute(
             text("SELECT provider, media_type, file_id FROM scanner_media WHERE bot_id=:b"),
             {"b": source_bot_id},
         ).mappings().all()
         for m in media_rows:
+            new_fid = _reupload_file_id(src_token, dst_token, chat_id, m["file_id"], m["media_type"])
             conn.execute(
                 text("INSERT INTO scanner_media (bot_id, provider, media_type, file_id, updated_at) VALUES (:b, :p, :mt, :fid, NOW())"),
-                {"b": target_bot_id, "p": m["provider"], "mt": m["media_type"], "fid": m["file_id"]},
+                {"b": target_bot_id, "p": m["provider"], "mt": m["media_type"], "fid": new_fid},
             )
+            reup_count += 1
 
         # 3) Clone scanner_games
         conn.execute(text("DELETE FROM scanner_games WHERE bot_id=:b"), {"b": target_bot_id})
@@ -1823,22 +1923,27 @@ def clone_bot_data(source_bot_id: str, target_bot_id: str) -> dict:
                 {"b": target_bot_id, "p": g["provider"], "g": g["game"]},
             )
 
-        # 4) Clone actions (custom commands/callbacks)
+        # 4) Clone actions (re-upload media)
         conn.execute(text("DELETE FROM actions WHERE bot_id=:b"), {"b": target_bot_id})
         action_rows = conn.execute(
             text("SELECT key, type, text, media_file_id, delay_seconds FROM actions WHERE bot_id=:b"),
             {"b": source_bot_id},
         ).mappings().all()
         for a in action_rows:
+            fid = a["media_file_id"]
+            if fid and a["type"] != "text":
+                fid = _reupload_file_id(src_token, dst_token, chat_id, fid, a["type"])
+                reup_count += 1
             conn.execute(
                 text("INSERT INTO actions (bot_id, key, type, text, media_file_id, delay_seconds) VALUES (:b, :k, :t, :tx, :mf, :d)"),
-                {"b": target_bot_id, "k": a["key"], "t": a["type"], "tx": a["text"], "mf": a["media_file_id"], "d": a["delay_seconds"]},
+                {"b": target_bot_id, "k": a["key"], "t": a["type"], "tx": a["text"], "mf": fid, "d": a["delay_seconds"]},
             )
 
     return {
         "media": len(media_rows),
         "games": len(game_rows),
         "actions": len(action_rows),
+        "reuploaded": reup_count,
     }
 
 
@@ -3404,7 +3509,8 @@ def telegram_webhook():
                     elif int(source_bot["owner_id"]) != uid:
                         send_message(token, chat_id, "❌ Kau bukan owner bot source tu.", parse_mode="HTML")
                     else:
-                        result = clone_bot_data(str(source_bot["id"]), bot_id)
+                        send_message(token, chat_id, "⏳ Cloning data... sila tunggu (media sedang di-transfer).", parse_mode="HTML")
+                        result = clone_bot_data(str(source_bot["id"]), bot_id, chat_id=chat_id)
                         if "error" in result:
                             send_message(token, chat_id, f"❌ Error: {result['error']}", parse_mode="HTML")
                         else:
@@ -3416,10 +3522,12 @@ def telegram_webhook():
                                 f"• Scanner media: <b>{result['media']}</b> provider\n"
                                 f"• Game list: <b>{result['games']}</b> games\n"
                                 f"• Custom actions: <b>{result['actions']}</b> items\n"
+                                f"• Media re-uploaded: <b>{result.get('reuploaded', 0)}</b> files\n"
                                 f"• Bot settings: ✅ updated\n\n"
                                 f"Taip /settings untuk check.",
                                 parse_mode="HTML",
                             )
+
 
         # NEW admin commands (owner only untuk add/del)
         elif text_msg.startswith("/admins") and require_admin(bot_row, uid):
