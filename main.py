@@ -659,18 +659,6 @@ def livegram_forward_to_admin(bot_row, msg):
     source_msg_id = msg.get("message_id")
     chat_type = msg.get("chat", {}).get("type", "private")
 
-    # Build header
-    user_link = f"@{uname}" if uname else f'<a href="tg://user?id={uid}">{html.escape(fname)}</a>'
-    if chat_type == "private":
-        header = f"💬 <b>LIVEGRAM</b>\n👤 {user_link} | <code>{uid}</code>"
-    else:
-        chat_title = msg.get("chat", {}).get("title") or "Group"
-        header = (
-            f"💬 <b>LIVEGRAM (Group)</b>\n"
-            f"👤 {user_link} | <code>{uid}</code>\n"
-            f"📍 {html.escape(chat_title)} (<code>{source_chat_id}</code>)"
-        )
-
     # Forward the original message first
     fwd_result = tg_call(token, "forwardMessage", data={
         "chat_id": admin_chat,
@@ -682,31 +670,16 @@ def livegram_forward_to_admin(bot_row, msg):
     if fwd_result and fwd_result.get("ok"):
         fwd_msg_id = fwd_result["result"]["message_id"]
 
-    # Send header as reply to forwarded message
-    header_data = {"chat_id": admin_chat, "text": header, "parse_mode": "HTML"}
+    # Save mapping
     if fwd_msg_id:
-        header_data["reply_to_message_id"] = fwd_msg_id
-    header_result = tg_call(token, "sendMessage", data=header_data)
-
-    header_msg_id = None
-    if header_result and header_result.get("ok"):
-        header_msg_id = header_result["result"]["message_id"]
-
-    # Save mapping (both forwarded msg and header msg so admin can reply to either)
-    try:
-        with engine.begin() as conn:
-            if fwd_msg_id:
+        try:
+            with engine.begin() as conn:
                 conn.execute(text(
                     "INSERT INTO livegram_messages (bot_id, fwd_message_id, source_chat_id, source_user_id, source_message_id) "
                     "VALUES (:b, :fwd, :sc, :su, :sm) ON CONFLICT DO NOTHING"
                 ), {"b": bot_id, "fwd": fwd_msg_id, "sc": source_chat_id, "su": uid, "sm": source_msg_id})
-            if header_msg_id:
-                conn.execute(text(
-                    "INSERT INTO livegram_messages (bot_id, fwd_message_id, source_chat_id, source_user_id, source_message_id) "
-                    "VALUES (:b, :fwd, :sc, :su, :sm) ON CONFLICT DO NOTHING"
-                ), {"b": bot_id, "fwd": header_msg_id, "sc": source_chat_id, "su": uid, "sm": source_msg_id})
-    except Exception as e:
-        logger.error("Livegram save mapping error: %s", e)
+        except Exception as e:
+            logger.error("Livegram save mapping error: %s", e)
 
 
 def livegram_handle_admin_reply(bot_row, msg):
