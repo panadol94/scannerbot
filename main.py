@@ -1903,6 +1903,14 @@ def clone_bot_data(source_bot_id: str, target_bot_id: str, chat_id: int = 0) -> 
         reup_count = 0
         logger.info("CLONE: source=%s (%s) -> target=%s (%s)",
                      source_bot_id, src.get("bot_username"), target_bot_id, tgt.get("bot_username"))
+        # Debug: dump source bot key fields
+        _dbg_fields = ["start_text", "start_message", "start_media_type", "start_media_file_id",
+                        "loading_text", "loading_media_type", "loading_media_file_id"]
+        for _f in _dbg_fields:
+            _v = src.get(_f)
+            logger.info("CLONE SRC %s = %s", _f, repr(_v)[:120] if _v else "NULL")
+        # Log all column names from source to spot unexpected fields
+        logger.info("CLONE SRC columns: %s", list(src.keys()))
 
         # Re-upload bot-level media file_ids
         params = {f"_{c}": src.get(c) for c in CLONE_COLS}
