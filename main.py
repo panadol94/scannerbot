@@ -665,12 +665,15 @@ def livegram_forward_to_admin(bot_row, msg):
         "from_chat_id": source_chat_id,
         "message_id": source_msg_id,
     })
+    logger.info("LIVEGRAM-FWD: result=%s", fwd_result)
 
     fwd_msg_id = None
     if fwd_result and fwd_result.get("ok"):
         fwd_msg_id = fwd_result["result"]["message_id"]
 
     # Save mapping
+    logger.info("LIVEGRAM-FWD: fwd_msg_id=%s bot_id=%s source_chat=%s source_user=%s",
+                fwd_msg_id, bot_id, source_chat_id, uid)
     if fwd_msg_id:
         try:
             with engine.begin() as conn:
@@ -678,6 +681,7 @@ def livegram_forward_to_admin(bot_row, msg):
                     "INSERT INTO livegram_messages (bot_id, fwd_message_id, source_chat_id, source_user_id, source_message_id) "
                     "VALUES (:b, :fwd, :sc, :su, :sm) ON CONFLICT DO NOTHING"
                 ), {"b": bot_id, "fwd": fwd_msg_id, "sc": source_chat_id, "su": uid, "sm": source_msg_id})
+            logger.info("LIVEGRAM-FWD: saved mapping fwd_msg_id=%s -> source=%s", fwd_msg_id, source_chat_id)
         except Exception as e:
             logger.error("Livegram save mapping error: %s", e)
 
