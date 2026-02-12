@@ -1901,6 +1901,8 @@ def clone_bot_data(source_bot_id: str, target_bot_id: str, chat_id: int = 0) -> 
         src_token = src["token"]
         dst_token = tgt["token"]
         reup_count = 0
+        logger.info("CLONE: source=%s (%s) -> target=%s (%s)",
+                     source_bot_id, src.get("bot_username"), target_bot_id, tgt.get("bot_username"))
 
         # Re-upload bot-level media file_ids
         params = {f"_{c}": src.get(c) for c in CLONE_COLS}
@@ -1923,6 +1925,7 @@ def clone_bot_data(source_bot_id: str, target_bot_id: str, chat_id: int = 0) -> 
             text("SELECT provider, media_type, file_id FROM scanner_media WHERE bot_id=:b"),
             {"b": source_bot_id},
         ).mappings().all()
+        logger.info("CLONE: scanner_media rows found: %d (source=%s)", len(media_rows), source_bot_id)
         for m in media_rows:
             new_fid = _reupload_file_id(src_token, dst_token, chat_id, m["file_id"], m["media_type"])
             conn.execute(
@@ -1943,12 +1946,15 @@ def clone_bot_data(source_bot_id: str, target_bot_id: str, chat_id: int = 0) -> 
                 {"b": target_bot_id, "p": g["provider"], "g": g["game"]},
             )
 
+        logger.info("CLONE: scanner_games rows found: %d", len(game_rows))
+
         # 4) Clone actions (re-upload media)
         conn.execute(text("DELETE FROM actions WHERE bot_id=:b"), {"b": target_bot_id})
         action_rows = conn.execute(
             text("SELECT key, type, text, media_file_id, delay_seconds FROM actions WHERE bot_id=:b"),
             {"b": source_bot_id},
         ).mappings().all()
+        logger.info("CLONE: actions rows found: %d", len(action_rows))
         for a in action_rows:
             fid = a["media_file_id"]
             if fid and a["type"] != "text":
@@ -1964,6 +1970,9 @@ def clone_bot_data(source_bot_id: str, target_bot_id: str, chat_id: int = 0) -> 
         "games": len(game_rows),
         "actions": len(action_rows),
         "reuploaded": reup_count,
+        "source_id": str(source_bot_id)[:8],
+        "source_user": src.get("bot_username") or "?",
+        "start_text_len": len(src.get("start_text") or ""),
     }
 
 
@@ -3556,6 +3565,10 @@ def telegram_webhook():
                                         f"• Custom actions: <b>{result['actions']}</b> items\n"
                                         f"• Media re-uploaded: <b>{result.get('reuploaded', 0)}</b> files\n"
                                         f"• Bot settings: ✅ updated\n\n"
+                                        f"🔍 <b>Debug:</b>\n"
+                                        f"• Source ID: <code>{result.get('source_id','?')}</code>\n"
+                                        f"• Source user: <code>{result.get('source_user','?')}</code>\n"
+                                        f"• Start text len: {result.get('start_text_len',0)}\n\n"
                                         f"Taip /settings untuk check.",
                                         parse_mode="HTML",
                                     )
