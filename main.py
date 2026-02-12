@@ -686,18 +686,27 @@ def livegram_forward_to_admin(bot_row, msg):
     header_data = {"chat_id": admin_chat, "text": header, "parse_mode": "HTML"}
     if fwd_msg_id:
         header_data["reply_to_message_id"] = fwd_msg_id
-    tg_call(token, "sendMessage", data=header_data)
+    header_result = tg_call(token, "sendMessage", data=header_data)
 
-    # Save mapping
-    if fwd_msg_id:
-        try:
-            with engine.begin() as conn:
+    header_msg_id = None
+    if header_result and header_result.get("ok"):
+        header_msg_id = header_result["result"]["message_id"]
+
+    # Save mapping (both forwarded msg and header msg so admin can reply to either)
+    try:
+        with engine.begin() as conn:
+            if fwd_msg_id:
                 conn.execute(text(
                     "INSERT INTO livegram_messages (bot_id, fwd_message_id, source_chat_id, source_user_id, source_message_id) "
                     "VALUES (:b, :fwd, :sc, :su, :sm) ON CONFLICT DO NOTHING"
                 ), {"b": bot_id, "fwd": fwd_msg_id, "sc": source_chat_id, "su": uid, "sm": source_msg_id})
-        except Exception as e:
-            logger.error("Livegram save mapping error: %s", e)
+            if header_msg_id:
+                conn.execute(text(
+                    "INSERT INTO livegram_messages (bot_id, fwd_message_id, source_chat_id, source_user_id, source_message_id) "
+                    "VALUES (:b, :fwd, :sc, :su, :sm) ON CONFLICT DO NOTHING"
+                ), {"b": bot_id, "fwd": header_msg_id, "sc": source_chat_id, "su": uid, "sm": source_msg_id})
+    except Exception as e:
+        logger.error("Livegram save mapping error: %s", e)
 
 
 def livegram_handle_admin_reply(bot_row, msg):
