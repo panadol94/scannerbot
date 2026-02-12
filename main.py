@@ -1914,6 +1914,10 @@ def clone_bot_data(source_bot_id: str, target_bot_id: str, chat_id: int = 0) -> 
 
         # Re-upload bot-level media file_ids
         params = {f"_{c}": src.get(c) for c in CLONE_COLS}
+        # Fallback: editstart bug saved to start_message instead of start_text
+        if not params.get("_start_text") and src.get("start_message"):
+            params["_start_text"] = src.get("start_message")
+            logger.info("CLONE: using start_message fallback (start_text was NULL)")
         for mt_col, fid_col in MEDIA_PAIRS:
             mt_val = src.get(mt_col)
             fid_val = src.get(fid_col)
@@ -2786,7 +2790,7 @@ def preview_start(bot_row: dict, chat_id: int, uid: int):
     token = bot_row["token"]
     user_row = get_user_row(bot_id, uid) or {"user_id": uid, "first_name": "Admin", "username": None, "balance": 0, "shared_count": 0, "member_id": "000000"}
 
-    start_text = bot_row.get("start_text") or "Selamat datang {firstname}!\n\n!1share Share Link"
+    start_text = bot_row.get("start_text") or bot_row.get("start_message") or "Selamat datang {firstname}!\n\n!1share Share Link"
     final_text = render_placeholders(start_text, bot_row.get("bot_username") or "", user_row)
     share_q = make_share_query(bot_row.get("bot_username") or "", user_row)
     final_text, markup = parse_buttons(final_text, share_inline_query=share_q)
@@ -3139,7 +3143,7 @@ def handle_start(bot_row, chat_id, user, text_msg):
     if not ensure_access(bot_row, chat_id, int(user.get("id")), user_row):
         return
 
-    start_text = bot_row.get("start_text") or "Selamat datang {firstname}!"
+    start_text = bot_row.get("start_text") or bot_row.get("start_message") or "Selamat datang {firstname}!"
     final_text = render_placeholders(start_text, bot_row.get("bot_username") or "", user_row)
     share_q = make_share_query(bot_row.get("bot_username") or "", user_row)
     final_text, markup = parse_buttons(final_text, share_inline_query=share_q)
@@ -3672,7 +3676,7 @@ def telegram_webhook():
                     with engine.begin() as conn:
                         conn.execute(text("""
                             UPDATE bots
-                            SET start_message=:t,
+                            SET start_text=:t,
                                 start_media_type=:mt,
                                 start_media_file_id=:mf
                             WHERE id=:i
