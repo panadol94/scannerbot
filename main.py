@@ -700,7 +700,10 @@ def parse_buttons(text_: str, share_inline_query: Optional[str] = None) -> Tuple
 
                 elif typ == "share":
                     q = share_inline_query or "Jom join!"
-                    rows[row].append({"text": content, "switch_inline_query_current_chat": q})
+                    # Use Telegram share deep link to avoid @BotUsername prefix
+                    import urllib.parse as _up
+                    _share_url = _up.quote(q, safe="")
+                    rows[row].append({"text": content, "url": f"https://t.me/share/url?url=&text={_share_url}"})
 
                 elif typ == "withdrawal":
                     rows[row].append({"text": content, "callback_data": "req_withdraw"})
