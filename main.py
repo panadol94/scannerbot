@@ -3725,12 +3725,18 @@ def handle_broadcast_optimized(bot_row, chat_id, admin_id, text_msg, reply_msg):
         proof_txt = render_placeholders(final_txt, bot_username, {"user_id": 0, "first_name": "User", "username": "", "balance": 0, "shared_count": 0, "member_id": ""})
         proof_txt, proof_mk = parse_buttons(proof_txt, share_inline_query="")
         proof_header = "📋 <b>BROADCAST PROOF</b>\n━━━━━━━━━━━━━━━━━━\n"
+        proof_full = proof_header + proof_txt
 
         if mt and mid:
-            proof_cap = proof_header + proof_txt
-            send_media(token, chat_id, mt, mid, caption=proof_cap, reply_markup=proof_mk, parse_mode="HTML")
+            cap = sanitize_telegram_html(proof_full)
+            if _visible_len(cap) > TG_MAX_CAPTION:
+                # Too long for caption — send media then text separately
+                send_media(token, chat_id, mt, mid, caption=None, parse_mode=None)
+                send_message(token, chat_id, cap, reply_markup=proof_mk, parse_mode="HTML")
+            else:
+                send_media(token, chat_id, mt, mid, caption=cap, reply_markup=proof_mk, parse_mode="HTML")
         else:
-            send_message(token, chat_id, proof_header + proof_txt, reply_markup=proof_mk, parse_mode="HTML")
+            send_message(token, chat_id, proof_full, reply_markup=proof_mk, parse_mode="HTML")
     except Exception as e:
         logger.warning(f"Broadcast proof forward failed: {e}")
 
