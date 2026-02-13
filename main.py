@@ -3546,20 +3546,29 @@ def _broadcast_send_one(token, uid, mt, mid, ptxt, mk):
         method_map = {"photo": "sendPhoto", "video": "sendVideo", "animation": "sendAnimation", "document": "sendDocument"}
         field_map = {"photo": "photo", "video": "video", "animation": "animation", "document": "document"}
         if mt in method_map:
-            cap = sanitize_telegram_html(ptxt, max_len=TG_MAX_CAPTION) if ptxt else None
-            d = {"chat_id": uid, field_map[mt]: mid, "parse_mode": "HTML"}
-            if cap:
-                d["caption"] = cap
-            if mk:
-                d["reply_markup"] = json.dumps(mk)
-            _, err = _classify_tg_error(token, method_map[mt], data=d)
-            if err == "parse_error":
-                # Log exact caption for debugging, then retry without HTML
-                logger.warning(f"Broadcast HTML parse fail, caption={cap!r:.300}")
-                d.pop("parse_mode", None)
-                _, err2 = _classify_tg_error(token, method_map[mt], data=d)
-                return err2  # None = success on retry
-            return err
+            raw_len = len(ptxt or "")
+            if raw_len > TG_MAX_CAPTION:
+                # Caption too long — send media first, then text separately
+                d = {"chat_id": uid, field_map[mt]: mid}
+                _, err = _classify_tg_error(token, method_map[mt], data=d)
+                if err:
+                    return err
+                # Send full text as separate message (4096 limit)
+                return _broadcast_send_text(token, uid, ptxt, mk)
+            else:
+                cap = sanitize_telegram_html(ptxt, max_len=TG_MAX_CAPTION) if ptxt else None
+                d = {"chat_id": uid, field_map[mt]: mid, "parse_mode": "HTML"}
+                if cap:
+                    d["caption"] = cap
+                if mk:
+                    d["reply_markup"] = json.dumps(mk)
+                _, err = _classify_tg_error(token, method_map[mt], data=d)
+                if err == "parse_error":
+                    logger.warning(f"Broadcast HTML parse fail, caption={cap!r:.300}")
+                    d.pop("parse_mode", None)
+                    _, err2 = _classify_tg_error(token, method_map[mt], data=d)
+                    return err2
+                return err
         else:
             return _broadcast_send_text(token, uid, ptxt, mk)
     else:
