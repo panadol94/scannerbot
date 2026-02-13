@@ -339,7 +339,7 @@ init_db()
 # ---------------------------
 _ALLOWED_TAGS = {
     "b", "strong", "i", "em", "u", "ins", "s", "strike", "del",
-    "code", "pre", "a", "tg-spoiler"
+    "code", "pre", "a", "tg-spoiler", "tg-emoji"
 }
 
 
