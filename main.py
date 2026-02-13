@@ -353,61 +353,87 @@ def _trim(s: str, limit: int) -> str:
 
 def sanitize_telegram_html(text_: str, max_len: int = None) -> str:
     """
-    Telegram HTML parse_mode only supports limited tags.
-    If admin accidentally uses <upline> etc, Telegram will reject.
-    This sanitizer escapes unknown tags safely.
-    Also removes orphaned closing tags and auto-closes unclosed tags.
+    Robust Telegram HTML sanitizer using a proper parser.
+    Handles: overlapping tags, orphaned closing tags, unclosed tags,
+    unknown tags (silently stripped), and bare '<' characters.
     """
     if not text_:
         return ""
 
-    def repl(m):
-        tag = m.group(0)
-        m2 = re.match(r"</?\s*([a-zA-Z0-9\-]+)", tag)
-        if not m2:
-            return html.escape(tag)
-        name = m2.group(1).lower()
-        if name in _ALLOWED_TAGS:
-            return tag
-        return html.escape(tag)
+    from html.parser import HTMLParser
 
-    out = re.sub(r"</?[^>]+>", repl, text_)
-
-    # Trim BEFORE auto-close so appended closing tags aren't chopped off
+    # Trim raw text first so auto-close tags appended later aren't cut
     limit = max_len if max_len is not None else TG_MAX_TEXT
-    out = _trim(out, limit)
+    text_ = _trim(text_, limit)
+    # Remove any partial tag left by trim (e.g. "<a href=...")
+    text_ = re.sub(r'<[^>]*$', '', text_)
 
-    # Pass 1: Remove orphaned closing tags (closing tags without matching openers)
-    # and auto-close unclosed tags
-    open_stack = []
-    orphan_positions = []  # (start, end) of orphan closing tags to remove
-    for m2 in re.finditer(r'<(/?)([a-zA-Z0-9\-]+)[^>]*>', out):
-        is_close = m2.group(1) == '/'
-        tag_name = m2.group(2).lower()
-        if tag_name not in _ALLOWED_TAGS:
-            continue
-        if is_close:
-            found = False
-            for i in range(len(open_stack) - 1, -1, -1):
-                if open_stack[i] == tag_name:
-                    open_stack.pop(i)
-                    found = True
+    class _San(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=False)
+            self.parts = []
+            self.stack = []  # [(tag_lower, attrs)]
+
+        def handle_starttag(self, tag, attrs):
+            tl = tag.lower()
+            if tl not in _ALLOWED_TAGS:
+                return  # silently drop unknown tags
+            self.stack.append((tl, attrs))
+            a = "".join(f' {k}="{v}"' for k, v in attrs if v is not None)
+            self.parts.append(f"<{tl}{a}>")
+
+        def handle_endtag(self, tag):
+            tl = tag.lower()
+            if tl not in _ALLOWED_TAGS:
+                return
+            # Find matching opener in stack
+            idx = None
+            for i in range(len(self.stack) - 1, -1, -1):
+                if self.stack[i][0] == tl:
+                    idx = i
                     break
-            if not found:
-                # Orphan closing tag — mark for removal
-                orphan_positions.append((m2.start(), m2.end()))
-        else:
-            open_stack.append(tag_name)
+            if idx is None:
+                return  # orphan closer, skip
 
-    # Remove orphan closing tags (iterate in reverse to keep positions stable)
-    for start, end in reversed(orphan_positions):
-        out = out[:start] + out[end:]
+            # Close intervening tags (fix overlapping)
+            reopen = []
+            while len(self.stack) > idx + 1:
+                t, a = self.stack.pop()
+                self.parts.append(f"</{t}>")
+                reopen.append((t, a))
 
-    # Auto-close any remaining unclosed tags
-    for unclosed in reversed(open_stack):
-        out += f"</{unclosed}>"
+            # Close the matched tag
+            self.stack.pop()
+            self.parts.append(f"</{tl}>")
 
-    return out
+            # Reopen intervening tags
+            for t, a in reversed(reopen):
+                astr = "".join(f' {k}="{v}"' for k, v in a if v is not None)
+                self.parts.append(f"<{t}{astr}>")
+                self.stack.append((t, a))
+
+        def handle_data(self, data):
+            self.parts.append(data)
+
+        def handle_entityref(self, name):
+            self.parts.append(f"&{name};")
+
+        def handle_charref(self, name):
+            self.parts.append(f"&#{name};")
+
+        def finish(self):
+            # Auto-close remaining unclosed tags
+            for t, _ in reversed(self.stack):
+                self.parts.append(f"</{t}>")
+            return "".join(self.parts)
+
+    san = _San()
+    try:
+        san.feed(text_)
+        return san.finish()
+    except Exception:
+        # If parser fails entirely, escape everything
+        return html.escape(text_)
 
 
 
