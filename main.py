@@ -3527,6 +3527,12 @@ def _broadcast_send_one(token, uid, mt, mid, ptxt, mk):
             if mk:
                 d["reply_markup"] = json.dumps(mk)
             _, err = _classify_tg_error(token, method_map[mt], data=d)
+            if err == "parse_error":
+                # Log exact caption for debugging, then retry without HTML
+                logger.warning(f"Broadcast HTML parse fail, caption={cap!r:.300}")
+                d.pop("parse_mode", None)
+                _, err2 = _classify_tg_error(token, method_map[mt], data=d)
+                return err2  # None = success on retry
             return err
         else:
             return _broadcast_send_text(token, uid, ptxt, mk)
@@ -3541,6 +3547,11 @@ def _broadcast_send_text(token, uid, ptxt, mk):
     if mk:
         d["reply_markup"] = json.dumps(mk)
     _, err = _classify_tg_error(token, "sendMessage", data=d)
+    if err == "parse_error":
+        logger.warning(f"Broadcast text HTML parse fail, text={cap!r:.300}")
+        d.pop("parse_mode", None)
+        _, err2 = _classify_tg_error(token, "sendMessage", data=d)
+        return err2
     return err
 
 
