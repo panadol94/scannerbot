@@ -77,9 +77,9 @@ SETTINGS_CB_PAGE_SIZE = int(os.getenv("SETTINGS_CB_PAGE_SIZE", "12"))
 # Admin management defaults
 ADMIN_DEFAULT_DAYS = int(os.getenv("ADMIN_DEFAULT_DAYS", "30"))
 
-# Safety: max length for TG message (HTML)
-TG_MAX_TEXT = int(os.getenv("TG_MAX_TEXT", "3500"))  # safe margin for HTML parsing
-TG_MAX_CAPTION = int(os.getenv("TG_MAX_CAPTION", "900"))  # caption limit is smaller; keep safe
+# Telegram API limits (visible text after HTML parsing)
+TG_MAX_TEXT = int(os.getenv("TG_MAX_TEXT", "4096"))
+TG_MAX_CAPTION = int(os.getenv("TG_MAX_CAPTION", "1024"))
 
 
 # ---------------------------
