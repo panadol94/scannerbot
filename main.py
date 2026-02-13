@@ -3540,23 +3540,30 @@ def _classify_tg_error(token: str, method: str, params=None, data=None, files=No
         return None, "other"
 
 
+def _visible_len(html_text: str) -> int:
+    """Count visible text length (exclude HTML tags). Telegram counts this for limits."""
+    return len(re.sub(r'<[^>]+>', '', html_text or ""))
+
+
 def _broadcast_send_one(token, uid, mt, mid, ptxt, mk):
     """Send one broadcast message, return error_category or None on success."""
     if mt and mid:
         method_map = {"photo": "sendPhoto", "video": "sendVideo", "animation": "sendAnimation", "document": "sendDocument"}
         field_map = {"photo": "photo", "video": "video", "animation": "animation", "document": "document"}
         if mt in method_map:
-            raw_len = len(ptxt or "")
-            if raw_len > TG_MAX_CAPTION:
-                # Caption too long — send media first, then text separately
+            # Sanitize HTML without strict trimming (Telegram counts visible chars, not raw)
+            cap = sanitize_telegram_html(ptxt) if ptxt else None
+            vis_len = _visible_len(cap) if cap else 0
+
+            if vis_len > TG_MAX_CAPTION:
+                # Visible text exceeds 1024 — send media first, then text separately
                 d = {"chat_id": uid, field_map[mt]: mid}
                 _, err = _classify_tg_error(token, method_map[mt], data=d)
                 if err:
                     return err
-                # Send full text as separate message (4096 limit)
                 return _broadcast_send_text(token, uid, ptxt, mk)
             else:
-                cap = sanitize_telegram_html(ptxt, max_len=TG_MAX_CAPTION) if ptxt else None
+                # Fits as caption — send together
                 d = {"chat_id": uid, field_map[mt]: mid, "parse_mode": "HTML"}
                 if cap:
                     d["caption"] = cap
