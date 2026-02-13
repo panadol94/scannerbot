@@ -351,11 +351,12 @@ def _trim(s: str, limit: int) -> str:
     return s[:limit] + "…"
 
 
-def sanitize_telegram_html(text_: str) -> str:
+def sanitize_telegram_html(text_: str, max_len: int = None) -> str:
     """
     Telegram HTML parse_mode only supports limited tags.
     If admin accidentally uses <upline> etc, Telegram will reject.
     This sanitizer escapes unknown tags safely.
+    Also removes orphaned closing tags and auto-closes unclosed tags.
     """
     if not text_:
         return ""
@@ -372,24 +373,40 @@ def sanitize_telegram_html(text_: str) -> str:
 
     out = re.sub(r"</?[^>]+>", repl, text_)
 
-    # Auto-close unclosed allowed tags (e.g. <i> without </i>)
+    # Trim BEFORE auto-close so appended closing tags aren't chopped off
+    limit = max_len if max_len is not None else TG_MAX_TEXT
+    out = _trim(out, limit)
+
+    # Pass 1: Remove orphaned closing tags (closing tags without matching openers)
+    # and auto-close unclosed tags
     open_stack = []
+    orphan_positions = []  # (start, end) of orphan closing tags to remove
     for m2 in re.finditer(r'<(/?)([a-zA-Z0-9\-]+)[^>]*>', out):
         is_close = m2.group(1) == '/'
         tag_name = m2.group(2).lower()
         if tag_name not in _ALLOWED_TAGS:
             continue
         if is_close:
+            found = False
             for i in range(len(open_stack) - 1, -1, -1):
                 if open_stack[i] == tag_name:
                     open_stack.pop(i)
+                    found = True
                     break
+            if not found:
+                # Orphan closing tag — mark for removal
+                orphan_positions.append((m2.start(), m2.end()))
         else:
             open_stack.append(tag_name)
+
+    # Remove orphan closing tags (iterate in reverse to keep positions stable)
+    for start, end in reversed(orphan_positions):
+        out = out[:start] + out[end:]
+
+    # Auto-close any remaining unclosed tags
     for unclosed in reversed(open_stack):
         out += f"</{unclosed}>"
 
-    out = _trim(out, TG_MAX_TEXT)
     return out
 
 
@@ -589,8 +606,9 @@ def send_media(token, chat_id, media_type, file_id_or_url, caption=None, reply_m
     if media_type not in method_map:
         return send_message(token, chat_id, caption or "", reply_markup=reply_markup, parse_mode=parse_mode)
 
-    cap = sanitize_telegram_html(caption) if (caption and parse_mode == "HTML") else caption
-    cap = _trim(cap or "", TG_MAX_CAPTION) if cap is not None else None
+    cap = sanitize_telegram_html(caption, max_len=TG_MAX_CAPTION) if (caption and parse_mode == "HTML") else caption
+    if cap is not None and parse_mode != "HTML":
+        cap = _trim(cap, TG_MAX_CAPTION)
 
     data = {"chat_id": chat_id, field_map[media_type]: file_id_or_url, "parse_mode": parse_mode}
     if cap:
@@ -602,8 +620,8 @@ def send_media(token, chat_id, media_type, file_id_or_url, caption=None, reply_m
 
 def _input_media(media_type: str, file_id_or_url: str, caption: str, parse_mode: str) -> dict:
     # Telegram InputMedia types: photo, video, animation, document
-    cap = sanitize_telegram_html(caption) if (caption and parse_mode == "HTML") else caption
-    cap = _trim(cap or "", TG_MAX_CAPTION)
+    cap = sanitize_telegram_html(caption, max_len=TG_MAX_CAPTION) if (caption and parse_mode == "HTML") else caption
+    cap = _trim(cap or "", TG_MAX_CAPTION) if parse_mode != "HTML" else (cap or "")
 
     m = {"type": media_type, "media": file_id_or_url}
     if cap:
@@ -3455,6 +3473,77 @@ def handle_contact(bot_row, msg):
     handle_start(bot_row, chat_id, msg.get("from") or {"id": uid}, "/start")
 
 
+def _classify_tg_error(token: str, method: str, params=None, data=None, files=None):
+    """
+    Like tg_call but returns (result, error_category).
+    error_category is None on success, or one of:
+      'blocked', 'deactivated', 'not_found', 'parse_error', 'other'
+    """
+    try:
+        r = SESSION.post(
+            TG_API.format(token=token, method=method),
+            params=params, data=data, files=files, timeout=25,
+        )
+        try:
+            js = r.json()
+        except Exception:
+            return None, "other"
+
+        if not js.get("ok"):
+            desc = (js.get("description") or "").lower()
+            code = js.get("error_code")
+            if code == 403:
+                if "bot was blocked" in desc:
+                    return None, "blocked"
+                if "user is deactivated" in desc:
+                    return None, "deactivated"
+                if "bot can't initiate" in desc or "bots can't send" in desc:
+                    return None, "no_access"
+                return None, "forbidden"
+            if code == 400:
+                if "chat not found" in desc:
+                    return None, "not_found"
+                if "parse entities" in desc or "can't parse" in desc:
+                    return None, "parse_error"
+                return None, "bad_request"
+            if code == 429:
+                return None, "rate_limit"
+            return None, "other"
+        return js.get("result"), None
+    except Exception:
+        return None, "other"
+
+
+def _broadcast_send_one(token, uid, mt, mid, ptxt, mk):
+    """Send one broadcast message, return error_category or None on success."""
+    if mt and mid:
+        method_map = {"photo": "sendPhoto", "video": "sendVideo", "animation": "sendAnimation", "document": "sendDocument"}
+        field_map = {"photo": "photo", "video": "video", "animation": "animation", "document": "document"}
+        if mt in method_map:
+            cap = sanitize_telegram_html(ptxt, max_len=TG_MAX_CAPTION) if ptxt else None
+            d = {"chat_id": uid, field_map[mt]: mid, "parse_mode": "HTML"}
+            if cap:
+                d["caption"] = cap
+            if mk:
+                d["reply_markup"] = json.dumps(mk)
+            _, err = _classify_tg_error(token, method_map[mt], data=d)
+            return err
+        else:
+            return _broadcast_send_text(token, uid, ptxt, mk)
+    else:
+        return _broadcast_send_text(token, uid, ptxt, mk)
+
+
+def _broadcast_send_text(token, uid, ptxt, mk):
+    """Send text broadcast, return error_category or None on success."""
+    cap = sanitize_telegram_html(ptxt) if ptxt else ""
+    d = {"chat_id": uid, "text": cap or "(empty)", "parse_mode": "HTML"}
+    if mk:
+        d["reply_markup"] = json.dumps(mk)
+    _, err = _classify_tg_error(token, "sendMessage", data=d)
+    return err
+
+
 def handle_broadcast_optimized(bot_row, chat_id, admin_id, text_msg, reply_msg):
     bot_id, token = str(bot_row["id"]), bot_row["token"]
     if not require_admin(bot_row, admin_id):
@@ -3478,10 +3567,9 @@ def handle_broadcast_optimized(bot_row, chat_id, admin_id, text_msg, reply_msg):
         send_message(token, chat_id, "⚠️ Tiada user untuk broadcast.")
         return
 
-
     # Direct broadcast mode (optimized for VPS)
     send_message(token, chat_id, f"📣 Broadcasting to {len(user_ids)} users...")
-    
+
     # Batch fetch all users for better performance (fixes N+1 query)
     bot_username = bot_row.get("bot_username") or ""
     stmt = text("""
@@ -3489,15 +3577,19 @@ def handle_broadcast_optimized(bot_row, chat_id, admin_id, text_msg, reply_msg):
         FROM users
         WHERE bot_id=:b AND user_id = ANY(:uids)
     """).bindparams(sa.bindparam("uids", type_=sa.ARRAY(sa.BigInteger())))
-    
+
     with engine.connect() as conn:
         user_rows = conn.execute(stmt, {"b": bot_id, "uids": user_ids}).mappings().all()
-    
+
     # Create lookup dict for faster access
     user_dict = {u["user_id"]: dict(u) for u in user_rows}
-    
+
+    # --- Delivery tracking ---
+    t_start = time.time()
     sent = 0
-    failed = 0
+    fail_categories = {}  # category -> [uid, uid, ...]
+    first_success_msg = None  # for proof forwarding
+
     for uid in user_ids:
         try:
             urow = user_dict.get(uid) or {"user_id": uid}
@@ -3505,18 +3597,121 @@ def handle_broadcast_optimized(bot_row, chat_id, admin_id, text_msg, reply_msg):
             share_q = make_share_query(bot_username, urow)
             ptxt, mk = parse_buttons(ptxt, share_inline_query=share_q)
 
-            if mt and mid:
-                send_media(token, uid, mt, mid, caption=ptxt, reply_markup=mk, parse_mode="HTML")
+            err = _broadcast_send_one(token, uid, mt, mid, ptxt, mk)
+            if err is None:
+                sent += 1
+                # Capture first successful send for proof (only need chat_id)
+                if first_success_msg is None:
+                    first_success_msg = uid
             else:
-                send_message(token, uid, ptxt, reply_markup=mk, parse_mode="HTML")
-
-            sent += 1
+                fail_categories.setdefault(err, []).append(uid)
             time.sleep(BROADCAST_SLEEP)
         except Exception as e:
-            failed += 1
+            fail_categories.setdefault("exception", []).append(uid)
             logger.warning(f"Broadcast send failed uid={uid}: {e}")
-    
-    send_message(token, chat_id, f"✅ Done. Sent: {sent}/{len(user_ids)} (failed: {failed})")
+
+    t_end = time.time()
+    duration = t_end - t_start
+    total_failed = sum(len(v) for v in fail_categories.values())
+
+    # --- Build delivery report ---
+    target_label = "Verified Users" if target_ver else "All Users"
+    media_label = mt.upper() if mt else "TEXT"
+
+    report_lines = [
+        "📣 <b>BROADCAST DELIVERY REPORT</b>",
+        "━━━━━━━━━━━━━━━━━━",
+        f"🎯 Target: <b>{target_label}</b>",
+        f"📦 Type: <b>{media_label}</b>",
+        f"👥 Total: <b>{len(user_ids)}</b>",
+        "",
+        f"✅ Delivered: <b>{sent}</b>",
+        f"❌ Failed: <b>{total_failed}</b>",
+    ]
+
+    # Category breakdown
+    category_labels = {
+        "blocked": "🚫 Bot Blocked",
+        "deactivated": "💀 User Deactivated",
+        "not_found": "🔍 Chat Not Found",
+        "no_access": "🔒 No Access",
+        "forbidden": "⛔ Forbidden",
+        "parse_error": "⚠️ HTML Parse Error",
+        "bad_request": "❓ Bad Request",
+        "rate_limit": "⏳ Rate Limited",
+        "other": "❗ Other Error",
+        "exception": "💥 Exception",
+    }
+
+    if fail_categories:
+        report_lines.append("")
+        report_lines.append("<b>Failure Breakdown:</b>")
+        for cat, uids in sorted(fail_categories.items(), key=lambda x: -len(x[1])):
+            label = category_labels.get(cat, cat)
+            report_lines.append(f"  {label}: <b>{len(uids)}</b>")
+
+    # Duration
+    if duration < 60:
+        dur_str = f"{duration:.1f}s"
+    else:
+        dur_str = f"{int(duration // 60)}m {int(duration % 60)}s"
+
+    report_lines.extend([
+        "",
+        f"🕒 Duration: <b>{dur_str}</b>",
+        f"📅 {now_local_str('%d/%m/%Y %H:%M:%S')}",
+        "━━━━━━━━━━━━━━━━━━",
+    ])
+
+    report_text = "\n".join(report_lines)
+    send_message(token, chat_id, report_text, parse_mode="HTML")
+
+    # --- Forward proof: send copy of broadcast to admin chat ---
+    try:
+        # Render with a dummy user for proof display
+        proof_txt = render_placeholders(final_txt, bot_username, {"user_id": 0, "first_name": "User", "username": "", "balance": 0, "shared_count": 0, "member_id": ""})
+        proof_txt, proof_mk = parse_buttons(proof_txt, share_inline_query="")
+        proof_header = "📋 <b>BROADCAST PROOF</b>\n━━━━━━━━━━━━━━━━━━\n"
+
+        if mt and mid:
+            proof_cap = proof_header + proof_txt
+            send_media(token, chat_id, mt, mid, caption=proof_cap, reply_markup=proof_mk, parse_mode="HTML")
+        else:
+            send_message(token, chat_id, proof_header + proof_txt, reply_markup=proof_mk, parse_mode="HTML")
+    except Exception as e:
+        logger.warning(f"Broadcast proof forward failed: {e}")
+
+    # --- Export failed users as Excel ---
+    if fail_categories:
+        try:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "failed_users"
+            ws.append(["user_id", "username", "first_name", "error_category"])
+            for cat, uids in fail_categories.items():
+                for fuid in uids:
+                    uinfo = user_dict.get(fuid) or {}
+                    ws.append([
+                        fuid,
+                        uinfo.get("username") or "-",
+                        uinfo.get("first_name") or "-",
+                        cat,
+                    ])
+
+            bio = BytesIO()
+            wb.save(bio)
+            bio.seek(0)
+
+            fname = f"broadcast_failed_{now_local_str('%Y%m%d_%H%M%S')}.xlsx"
+            files = {"document": (fname, bio)}
+            data = {
+                "chat_id": chat_id,
+                "caption": f"📎 <b>FAILED LIST</b>\nTotal: <b>{total_failed}</b> users",
+                "parse_mode": "HTML",
+            }
+            tg_call(token, "sendDocument", data=data, files=files)
+        except Exception as e:
+            logger.warning(f"Broadcast Excel export failed: {e}")
 
 
 def handle_withdraw_request(bot_row, chat_id, user):
