@@ -8,7 +8,8 @@ services:
     ports:
       - "8081:8080"
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     environment:
       - PORT=8080
       - DATABASE_URL=postgresql://user:password@db:5432/telegram_bot
@@ -25,6 +26,11 @@ services:
     image: postgres:15-alpine
     container_name: boda8-db
     restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d telegram_bot"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     environment:
       - POSTGRES_USER=user
       - POSTGRES_PASSWORD=password
