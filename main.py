@@ -3931,7 +3931,16 @@ def telegram_webhook():
         from_user = msg.get("from") or {}
         uid = from_user.get("id")
         text_msg = msg.get("text") or ""
+        # Also check caption for commands sent with media
+        if not text_msg and msg.get("caption"):
+            text_msg = msg["caption"]
         cmd = (text_msg.split()[0] if text_msg else "").split("@")[0]
+
+        # Debug: log admin commands
+        if text_msg.startswith("/") and uid == int(bot_row.get("owner_id", 0)):
+            has_reply = "reply_to_message" in msg
+            reply_has_photo = bool(msg.get("reply_to_message", {}).get("photo")) if has_reply else False
+            logger.info(f"[DEBUG-CMD] cmd={cmd} uid={uid} chat={chat_id} has_reply={has_reply} reply_has_photo={reply_has_photo} has_caption={bool(msg.get('caption'))} has_photo={bool(msg.get('photo'))}")
 
         if not uid:
             return "OK", 200
