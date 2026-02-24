@@ -4113,6 +4113,28 @@ def telegram_webhook():
                     send_message(token, chat_id, ("✅ Admin removed" if ok else "⚠️ Admin tak jumpa") + f": <code>{target}</code>", parse_mode="HTML")
 
         elif require_admin(bot_row, uid):
+            # Direct /setstart or /setloading command bypasses pending inputs
+            if text_msg.startswith(("/setstart", "/setloading")) and msg.get("reply_to_message"):
+                # Clear any pending input first
+                pending_inputs.pop((bot_id, uid), None)
+                rep = msg["reply_to_message"]
+                mt, mid, txt = save_content_from_reply(rep)
+                extra = "\n".join(text_msg.split("\n")[1:]).strip()
+                final_txt = (txt + ("\n" + extra if extra else "")).strip()
+
+                col_txt = "start_text" if text_msg.startswith("/setstart") else "loading_text"
+                col_type = "start_media_type" if text_msg.startswith("/setstart") else "loading_media_type"
+                col_file = "start_media_file_id" if text_msg.startswith("/setstart") else "loading_media_file_id"
+
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(f"UPDATE bots SET {col_txt}=:t, {col_type}=:mt, {col_file}=:mf WHERE id=:i"),
+                        {"t": final_txt, "mt": mt, "mf": mid, "i": bot_id},
+                    )
+                logger.info(f"[CMD] /{col_txt} updated by uid={uid} bot_id={bot_id}")
+                send_message(token, chat_id, f"✅ {col_txt} Updated.", parse_mode="HTML")
+                return "OK", 200
+
             #  PENDING INPUTS HANDLER (interactive flows from settings panel)
             if (bot_id, uid) in pending_inputs:
                 action, ts = pending_inputs[(bot_id, uid)]
@@ -4635,6 +4657,9 @@ def telegram_webhook():
                             {"t": final_txt, "mt": mt, "mf": mid, "i": bot_id},
                         )
                     send_message(token, chat_id, f"✅ {col_txt} Updated.", parse_mode="HTML")
+                else:
+                    cmd_name = "/setstart" if text_msg.startswith("/setstart") else "/setloading"
+                    send_message(token, chat_id, f"❌ Sila <b>REPLY</b> kepada content (text/gambar/video) yang nak dijadikan {cmd_name} message.", parse_mode="HTML")
 
             elif text_msg.startswith("/addscanner"):
                 if (not is_owner(uid, bot_row)) and (not is_admin(uid, bot_id)):
