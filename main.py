@@ -3946,10 +3946,12 @@ def telegram_webhook():
             return "OK", 200
 
         # LIVEGRAM: detect admin reply in admin group → route back to user
+        # Skip livegram if admin has a pending_inputs action (e.g. setting custom message)
         admin_gid = bot_row.get("admin_group_id")
         if admin_gid and chat_id == int(admin_gid) and bot_row.get("livegram") and msg.get("reply_to_message"):
-            if livegram_handle_admin_reply(bot_row, msg):
-                return "OK", 200
+            if (bot_id, uid) not in pending_inputs:
+                if livegram_handle_admin_reply(bot_row, msg):
+                    return "OK", 200
 
         # LIVEGRAM: forward user messages to admin group (fire-and-forget, don't return)
         if bot_row.get("livegram") and not require_admin(bot_row, uid):
