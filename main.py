@@ -5313,10 +5313,11 @@ def telegram_webhook():
                     mamt = re.search(r'(?i)\brm\s*(\d+(?:\.\d+)?)', req_text)
                     if not mamt:
                         mamt = re.match(r'\s*(\d+(?:\.\d+)?)\s', req_text)
-                    if not mamt:
-                        answer_callback(token, cq["id"], "Tak jumpa amount. Guna /approve <amount> (reply).", show_alert=True)
-                        return "OK", 200
-                    amt = float(mamt.group(1))
+                    if mamt:
+                        amt = float(mamt.group(1))
+                    else:
+                        # No explicit amount in request → use full balance
+                        amt = bal_before
                     if amt <= 0:
                         answer_callback(token, cq["id"], "Amount tak sah.", show_alert=True)
                         return "OK", 200
