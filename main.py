@@ -4248,10 +4248,7 @@ def telegram_webhook():
                     return "OK", 200
                 
                 elif action == "editstart":
-                    if not msg.get("reply_to_message"):
-                        send_message(token, chat_id, "⚠️ Please REPLY to the prompt message with your START content.", parse_mode="HTML")
-                        return "OK", 200
-                    rep = msg["reply_to_message"]
+                    rep = msg
                     mt, mid, txt = save_content_from_reply(rep)
                     with engine.begin() as conn:
                         conn.execute(text("""
@@ -4266,10 +4263,7 @@ def telegram_webhook():
                     return "OK", 200
                 
                 elif action == "editloading":
-                    if not msg.get("reply_to_message"):
-                        send_message(token, chat_id, "⚠️ Please REPLY to the prompt message with your LOADING content.", parse_mode="HTML")
-                        return "OK", 200
-                    rep = msg["reply_to_message"]
+                    rep = msg
                     mt, mid, txt = save_content_from_reply(rep)
                     with engine.begin() as conn:
                         conn.execute(text("""
