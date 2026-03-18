@@ -2561,8 +2561,8 @@ def settings_how(topic: str) -> str:
             "📌 <b>Step 1: Add Scanner Media</b>\n"
             "• Send GIF/video/photo to bot\n"
             "• Reply to that media:\n"
-            "<code>/setscannermedia jili</code>\n"
-            "<code>/setscannermedia mega888</code>\n\n"
+            "<code>/setscannermedia jili</code> atau <code>/addscanner jili</code>\n"
+            "<code>/setscannermedia mega888</code> atau <code>/addscanner mega888</code>\n\n"
             "📌 <b>Step 2: Add Games</b>\n"
             "• See \"📖 How: Add/Update Games\" button\n\n"
             "✅ <b>When Ready</b>\n"
@@ -4716,14 +4716,16 @@ def telegram_webhook():
                     cmd_name = "/setstart" if text_msg.startswith("/setstart") else "/setloading"
                     send_message(token, chat_id, f"❌ Sila <b>REPLY</b> kepada content (text/gambar/video) yang nak dijadikan {cmd_name} message.", parse_mode="HTML")
 
-            elif text_msg.startswith("/addscanner"):
+            elif text_msg.startswith(("/addscanner", "/setscannermedia")):
                 if (not is_owner(uid, bot_row)) and (not is_admin(uid, bot_id)):
                     tg_send_message(token, chat_id, "❌ Command ini untuk OWNER/ADMIN sahaja.", parse_mode="HTML")
                     return jsonify({"ok": True})
+                _is_set_cmd = text_msg.startswith("/setscannermedia")
                 parts = text_msg.split(maxsplit=1)
                 provider = norm_provider(parts[1] if len(parts) > 1 else "")
                 if not provider:
-                    tg_send_message(token, chat_id, "❌ Format: /addscanner <provider>\nContoh: /addscanner jili", parse_mode="HTML")
+                    _cmd_name = "/setscannermedia" if _is_set_cmd else "/addscanner"
+                    tg_send_message(token, chat_id, f"❌ Format: {_cmd_name} <provider>\nContoh: {_cmd_name} jili", parse_mode="HTML")
                     return jsonify({"ok": True})
                 if not msg.get("reply_to_message"):
                     tg_send_message(token, chat_id, "❌ Sila reply pada MEDIA (gambar/video/gif/document) yang nak dijadikan scanner.", parse_mode="HTML")
@@ -4753,7 +4755,10 @@ def telegram_webhook():
                 with engine.begin() as conn:
                     upsert_scanner_media(conn, bot_id, provider, media_type, file_id)
 
-                tg_send_message(token, chat_id, f"✅ Scanner media disimpan untuk <b>{html.escape(provider)}</b>.\n\nSeterusnya: /addgames {html.escape(provider)} (reply file txt).", parse_mode="HTML")
+                if _is_set_cmd:
+                    tg_send_message(token, chat_id, f"✅ Scanner media dikemaskini untuk <b>{html.escape(provider)}</b>.", parse_mode="HTML")
+                else:
+                    tg_send_message(token, chat_id, f"✅ Scanner media ditambah untuk <b>{html.escape(provider)}</b>.\n\nSeterusnya: /addgames {html.escape(provider)} (reply file txt).", parse_mode="HTML")
                 return jsonify({"ok": True})
 
             elif text_msg.startswith("/addgames") or text_msg.startswith("/updategames"):
