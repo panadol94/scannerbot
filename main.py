@@ -811,6 +811,7 @@ HELP_PLACEHOLDERS_FULL = (
     "━━━━━━━━━━━━━━━━━━\n"
     "📌 <b>BUTTON SYNTAX</b>\n"
     "• !1link Nama|https://example.com\n"
+    "• !1web Nama|https://example.com\n"
     "• !1callback Nama|key\n"
     "• !1share NamaButton\n"
     "• !1withdrawal Withdraw\n"
@@ -890,6 +891,16 @@ def parse_buttons(text_: str, share_inline_query: Optional[str] = None) -> Tuple
 
                 elif typ == "withdrawal":
                     rows[row].append({"text": content, "callback_data": "req_withdraw"})
+
+                elif typ == "web":
+                    if "|" in content:
+                        name, url = content.split("|", 1)
+                    else:
+                        name, url = "Open", content
+                    url = url.strip()
+                    if not url.startswith("http"):
+                        url = "https://" + url
+                    rows[row].append({"text": name.strip(), "web_app": {"url": url}})
 
                 continue
 
@@ -5413,7 +5424,12 @@ def telegram_webhook():
                                             .replace("{used}", str(_used_today))
                                             .replace("{remaining}", str(_remaining)))
 
-                                    _kb_lim = {"inline_keyboard": [[{"text": "⬅️ Kembali", "callback_data": "cb:menuscanner"}]]}
+                                    # Parse buttons from scan limit message (supports !1link, !1web, etc)
+                                    _msg, _parsed_kb = parse_buttons(_msg)
+                                    _kb_lim_rows = [[{"text": "⬅️ Kembali", "callback_data": "cb:menuscanner"}]]
+                                    if _parsed_kb and _parsed_kb.get("inline_keyboard"):
+                                        _kb_lim_rows = _parsed_kb["inline_keyboard"] + _kb_lim_rows
+                                    _kb_lim = {"inline_keyboard": _kb_lim_rows}
 
                                     # always show alert + send new message (do NOT edit old media message)
                                     try:
@@ -5461,7 +5477,12 @@ def telegram_webhook():
                                 txt_lim = render_placeholders(tpl, bot_latest.get("bot_username") or "", urow_lim)
                                 if lim is not None and lim > 0:
                                     txt_lim = (txt_lim + f"\\n\\n📌 Used: <b>{used_after}/{lim}</b>").strip()
-                                kb_lim = {"inline_keyboard": [[{"text": "⬅️ Kembali", "callback_data": "cb:menuscanner"}]]}
+                                # Parse buttons from scan limit message (supports !1link, !1web, etc)
+                                txt_lim, _parsed_kb2 = parse_buttons(txt_lim)
+                                _kb_lim2_rows = [[{"text": "⬅️ Kembali", "callback_data": "cb:menuscanner"}]]
+                                if _parsed_kb2 and _parsed_kb2.get("inline_keyboard"):
+                                    _kb_lim2_rows = _parsed_kb2["inline_keyboard"] + _kb_lim2_rows
+                                kb_lim = {"inline_keyboard": _kb_lim2_rows}
 
                                 mt_lim = bot_latest.get("scan_limit_message_media_type")
                                 mf_lim = bot_latest.get("scan_limit_message_media_file_id")
