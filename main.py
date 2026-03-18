@@ -5432,8 +5432,10 @@ def telegram_webhook():
                                     _kb_lim = {"inline_keyboard": _kb_lim_rows}
 
                                     # always show alert + send new message (do NOT edit old media message)
+                                    # Strip HTML for popup (answerCallbackQuery = plain text only)
+                                    _popup_txt = re.sub(r'<[^>]+>', '', _msg)[:180] if _msg else "Limit harian habis"
                                     try:
-                                        answer_callback(token, cq["id"], (_msg[:180] if _msg else "Limit harian habis"), show_alert=True)
+                                        answer_callback(token, cq["id"], _popup_txt, show_alert=True)
                                     except Exception:
                                         try:
                                             answer_callback(token, cq["id"], "Limit harian habis", show_alert=True)
