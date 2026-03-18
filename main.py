@@ -3839,10 +3839,15 @@ def process_withdraw(bot_row, chat_id, user, text_msg):
 
     bal0 = float((urow0 or {}).get("balance") or 0)
 
-    # Try to parse requested amount (first number in text)
+    # Try to parse requested amount — only match RM-prefixed or standalone leading number
+    # Avoids matching numbers inside usernames (e.g. "Cyber6777") or bank accounts
     req_amt = None
     try:
-        mamt = re.search(r"(\d+(?:\.\d+)?)", text_msg or "")
+        # Try RM prefix first: "RM50", "rm 100.50"
+        mamt = re.search(r'(?i)\brm\s*(\d+(?:\.\d+)?)', text_msg or "")
+        if not mamt:
+            # Fallback: standalone number at start of text (e.g. "50 Maybank 12345")
+            mamt = re.match(r'\s*(\d+(?:\.\d+)?)\s', text_msg or "")
         if mamt:
             req_amt = float(mamt.group(1))
     except Exception:
