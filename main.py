@@ -5309,7 +5309,10 @@ def telegram_webhook():
 
                 if action == "ap":
                     req_text = (wd.get("request_text") or "")
-                    mamt = re.search(r"(\d+(?:\.\d+)?)", req_text)
+                    # Smart amount parsing: RM-prefixed or standalone leading number
+                    mamt = re.search(r'(?i)\brm\s*(\d+(?:\.\d+)?)', req_text)
+                    if not mamt:
+                        mamt = re.match(r'\s*(\d+(?:\.\d+)?)\s', req_text)
                     if not mamt:
                         answer_callback(token, cq["id"], "Tak jumpa amount. Guna /approve <amount> (reply).", show_alert=True)
                         return "OK", 200
