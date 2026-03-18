@@ -201,8 +201,10 @@ def init_db():
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       processed_at TIMESTAMPTZ,
       processed_by BIGINT,
-      approved_amount NUMERIC
+      approved_amount NUMERIC,
+      request_amount NUMERIC
     );
+    ALTER TABLE withdrawals ADD COLUMN IF NOT EXISTS request_amount NUMERIC;
 
     -- ----------------------------
     -- SAFE MIGRATIONS (NEW FIELDS)
@@ -3853,8 +3855,8 @@ def process_withdraw(bot_row, chat_id, user, text_msg):
     wid = str(uuid.uuid4())
     with engine.begin() as conn:
         conn.execute(
-            text("INSERT INTO withdrawals (id, bot_id, user_id, request_text) VALUES (:id, :b, :u, :r)"),
-            {"id": wid, "b": bot_id, "u": uid, "r": text_msg},
+            text("INSERT INTO withdrawals (id, bot_id, user_id, request_text, request_amount) VALUES (:id, :b, :u, :r, :a)"),
+            {"id": wid, "b": bot_id, "u": uid, "r": text_msg, "a": bal0},
         )
 
     # Custom submitted message
@@ -5278,16 +5280,10 @@ def telegram_webhook():
                 bal_before = float((u or {}).get("balance") or 0)
 
                 if action == "ap":
-                    req_text = (wd.get("request_text") or "")
-                    # Smart amount parsing: RM-prefixed or standalone leading number
-                    mamt = re.search(r'(?i)\brm\s*(\d+(?:\.\d+)?)', req_text)
-                    if not mamt:
-                        mamt = re.match(r'\s*(\d+(?:\.\d+)?)\s', req_text)
-                    if mamt:
-                        amt = float(mamt.group(1))
-                    else:
-                        # No explicit amount in request → use full balance
-                        amt = bal_before
+                    # Use amount locked at request time
+                    amt = float(wd.get("request_amount") or 0)
+                    if amt <= 0:
+                        amt = bal_before  # fallback for old records without request_amount
                     if amt <= 0:
                         answer_callback(token, cq["id"], "Amount tak sah.", show_alert=True)
                         return "OK", 200
