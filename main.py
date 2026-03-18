@@ -243,6 +243,12 @@ def init_db():
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS withdrawal_reject_message TEXT;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS withdrawal_reject_media_type TEXT;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS withdrawal_reject_media_file_id TEXT;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS withdrawal_failed_message TEXT;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS withdrawal_failed_media_type TEXT;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS withdrawal_failed_media_file_id TEXT;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS withdrawal_submitted_message TEXT;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS withdrawal_submitted_media_type TEXT;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS withdrawal_submitted_media_file_id TEXT;
     
     -- Scanner media (per provider)
     CREATE TABLE IF NOT EXISTS scanner_media (
@@ -1962,11 +1968,20 @@ def render_withdrawal_template(tpl: str, amount: float, bal_before: float, bal_a
     out = out.replace("{balance_after}", f"RM{float(bal_after):.2f}")
     return out
 
-def build_withdraw_insufficient_msg(min_wd: float, bal: float) -> str:
+def build_withdraw_insufficient_msg(min_wd: float, bal: float, bot_row: dict = None) -> str:
+    """Build withdrawal insufficient balance message. Supports custom template from bot config."""
+    if bot_row:
+        tpl = (bot_row.get("withdrawal_failed_message") or "").strip()
+        if tpl:
+            return (tpl
+                    .replace("{min_withdraw}", f"RM{min_wd:.2f}")
+                    .replace("{balance}", f"RM{bal:.2f}")
+                    .replace("{minimum}", f"RM{min_wd:.2f}")
+                    )
     return (
-        "Transaction failed not enough affiliate balance.\n"
-        f"Minimum Withdraw: {min_wd:.2f}\n"
-        f"Commission Balance: {bal:.2f}"
+        f"❌ Baki tidak mencukupi untuk withdraw.\n"
+        f"Minimum Withdraw: RM{min_wd:.2f}\n"
+        f"Baki Semasa: RM{bal:.2f}"
     )
 
 # ---------------------------
@@ -2978,6 +2993,8 @@ def build_settings_keyboard_by_category(bot_row: dict, cat: str, page: int, page
             [{"text": "✏️ Edit Request Msg", "callback_data": "st:withdrawal:editrequest"}],
             [{"text": "✏️ Edit Approve Msg", "callback_data": "st:withdrawal:editapprove"},
              {"text": "✏️ Edit Reject Msg", "callback_data": "st:withdrawal:editreject"}],
+            [{"text": "✏️ Edit Failed Msg", "callback_data": "st:withdrawal:editfailed"},
+             {"text": "✏️ Edit Submitted Msg", "callback_data": "st:withdrawal:editsubmitted"}],
         ])
 
     elif cat == "verify":
@@ -3822,11 +3839,25 @@ def process_withdraw(bot_row, chat_id, user, text_msg):
         req_amt = None
 
     if bal0 < float(min_wd):
-        send_message(token, chat_id, build_withdraw_insufficient_msg(float(min_wd), float(bal0)), parse_mode=None)
+        bot_latest = get_bot_by_id(bot_id) or bot_row
+        failed_msg = build_withdraw_insufficient_msg(float(min_wd), float(bal0), bot_latest)
+        mt_f = bot_latest.get("withdrawal_failed_media_type")
+        mf_f = bot_latest.get("withdrawal_failed_media_file_id")
+        if mt_f and mf_f:
+            send_media(token, chat_id, mt_f, mf_f, caption=failed_msg, parse_mode="HTML")
+        else:
+            send_message(token, chat_id, failed_msg, parse_mode="HTML")
         return
 
     if req_amt is not None and req_amt > bal0:
-        send_message(token, chat_id, build_withdraw_insufficient_msg(float(min_wd), float(bal0)), parse_mode=None)
+        bot_latest = get_bot_by_id(bot_id) or bot_row
+        failed_msg = build_withdraw_insufficient_msg(float(min_wd), float(bal0), bot_latest)
+        mt_f = bot_latest.get("withdrawal_failed_media_type")
+        mf_f = bot_latest.get("withdrawal_failed_media_file_id")
+        if mt_f and mf_f:
+            send_media(token, chat_id, mt_f, mf_f, caption=failed_msg, parse_mode="HTML")
+        else:
+            send_message(token, chat_id, failed_msg, parse_mode="HTML")
         return
 
     wid = str(uuid.uuid4())
@@ -3841,7 +3872,20 @@ def process_withdraw(bot_row, chat_id, user, text_msg):
         ).mappings().first()
 
     bal = float((urow or {}).get("balance") or 0)
-    send_message(token, chat_id, "✅ Request withdraw dihantar. Tunggu admin process ya Bossku 😘", parse_mode="HTML")
+
+    # Custom submitted message
+    bot_latest_sub = get_bot_by_id(bot_id) or bot_row
+    sub_tpl = (bot_latest_sub.get("withdrawal_submitted_message") or "").strip()
+    if sub_tpl:
+        sub_msg = sub_tpl.replace("{balance}", f"RM{bal:.2f}")
+        mt_s = bot_latest_sub.get("withdrawal_submitted_media_type")
+        mf_s = bot_latest_sub.get("withdrawal_submitted_media_file_id")
+        if mt_s and mf_s:
+            send_media(token, chat_id, mt_s, mf_s, caption=sub_msg, parse_mode="HTML")
+        else:
+            send_message(token, chat_id, sub_msg, parse_mode="HTML")
+    else:
+        send_message(token, chat_id, "✅ Request withdraw dihantar. Tunggu admin process ya Bossku 😘", parse_mode="HTML")
 
     if bot_row.get("admin_group_id"):
         rpt = (
@@ -4302,6 +4346,32 @@ def telegram_webhook():
                                    {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
                     del pending_inputs[(bot_id, uid)]
                     send_message(token, chat_id, "✅ Withdrawal REJECT message updated!", parse_mode="HTML")
+                    return "OK", 200
+                
+                elif action == "withdrawalfailed":
+                    if not msg.get("reply_to_message"):
+                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
+                        return "OK", 200
+                    rep = msg["reply_to_message"]
+                    mt, mid, txt = save_content_from_reply(rep)
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET withdrawal_failed_message=:t, withdrawal_failed_media_type=:mt, withdrawal_failed_media_file_id=:mf WHERE id=:i"),
+                                   {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
+                    del pending_inputs[(bot_id, uid)]
+                    send_message(token, chat_id, "✅ Withdrawal FAILED message updated!", parse_mode="HTML")
+                    return "OK", 200
+                
+                elif action == "withdrawalsubmitted":
+                    if not msg.get("reply_to_message"):
+                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
+                        return "OK", 200
+                    rep = msg["reply_to_message"]
+                    mt, mid, txt = save_content_from_reply(rep)
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET withdrawal_submitted_message=:t, withdrawal_submitted_media_type=:mt, withdrawal_submitted_media_file_id=:mf WHERE id=:i"),
+                                   {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
+                    del pending_inputs[(bot_id, uid)]
+                    send_message(token, chat_id, "✅ Withdrawal SUBMITTED message updated!", parse_mode="HTML")
                     return "OK", 200
                 
                 # Verification Messages
@@ -5619,7 +5689,9 @@ def telegram_webhook():
             bal0 = float((urow0 or {}).get("balance") or 0)
 
             if bal0 < float(min_wd):
-                answer_callback(token, cq["id"], build_withdraw_insufficient_msg(float(min_wd), float(bal0)), show_alert=True)
+                _fail_msg = build_withdraw_insufficient_msg(float(min_wd), float(bal0), bot_row)
+                _fail_popup = re.sub(r'<[^>]+>', '', _fail_msg)[:180]
+                answer_callback(token, cq["id"], _fail_popup, show_alert=True)
                 return "OK", 200
 
             handle_withdraw_request(bot_row, chat_id, from_user)
@@ -5842,6 +5914,16 @@ def telegram_webhook():
                 elif sub == "editreject":
                     pending_inputs[(bot_id, uid)] = ("withdrawalreject", time.time())
                     send_message(token, chat_id, "✏️ <b>Edit Withdrawal Reject Message</b>\n\nReply with message when rejected.\n\nYou can send text or media.", parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+                elif sub == "editfailed":
+                    pending_inputs[(bot_id, uid)] = ("withdrawalfailed", time.time())
+                    send_message(token, chat_id, "✏️ <b>Edit Withdrawal Failed Message</b>\n\nReply with message when balance insufficient.\nPlaceholders: <code>{min_withdraw}</code>, <code>{balance}</code>\n\nYou can send text or media.", parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+                elif sub == "editsubmitted":
+                    pending_inputs[(bot_id, uid)] = ("withdrawalsubmitted", time.time())
+                    send_message(token, chat_id, "✏️ <b>Edit Withdrawal Submitted Message</b>\n\nReply with message when withdrawal request submitted.\nPlaceholders: <code>{balance}</code>\n\nYou can send text or media.", parse_mode="HTML")
                     answer_callback(token, cq["id"])
                     return "OK", 200
 
