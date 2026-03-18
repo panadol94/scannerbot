@@ -4301,10 +4301,7 @@ def telegram_webhook():
                     return "OK", 200
                 
                 elif action == "scanlimitmsg":
-                    if not msg.get("reply_to_message"):
-                        send_message(token, chat_id, "⚠️ Please REPLY to the prompt message with your custom limit message.", parse_mode="HTML")
-                        return "OK", 200
-                    rep = msg["reply_to_message"]
+                    rep = msg
                     mt, mid, txt = save_content_from_reply(rep)
                     with engine.begin() as conn:
                         conn.execute(text("""
@@ -4320,10 +4317,7 @@ def telegram_webhook():
                 
                 # Withdrawal Messages
                 elif action == "withdrawalrequest":
-                    if not msg.get("reply_to_message"):
-                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
-                        return "OK", 200
-                    rep = msg["reply_to_message"]
+                    rep = msg
                     mt, mid, txt = save_content_from_reply(rep)
                     with engine.begin() as conn:
                         conn.execute(text("UPDATE bots SET withdrawal_request_message=:t, withdrawal_request_media_type=:mt, withdrawal_request_media_file_id=:mf WHERE id=:i"), 
@@ -4333,10 +4327,7 @@ def telegram_webhook():
                     return "OK", 200
                 
                 elif action == "withdrawalapprove":
-                    if not msg.get("reply_to_message"):
-                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
-                        return "OK", 200
-                    rep = msg["reply_to_message"]
+                    rep = msg
                     mt, mid, txt = save_content_from_reply(rep)
                     with engine.begin() as conn:
                         conn.execute(text("UPDATE bots SET withdrawal_approve_message=:t, withdrawal_approve_media_type=:mt, withdrawal_approve_media_file_id=:mf WHERE id=:i"),
@@ -4346,10 +4337,7 @@ def telegram_webhook():
                     return "OK", 200
                 
                 elif action == "withdrawalreject":
-                    if not msg.get("reply_to_message"):
-                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
-                        return "OK", 200
-                    rep = msg["reply_to_message"]
+                    rep = msg
                     mt, mid, txt = save_content_from_reply(rep)
                     with engine.begin() as conn:
                         conn.execute(text("UPDATE bots SET withdrawal_reject_message=:t, withdrawal_reject_media_type=:mt, withdrawal_reject_media_file_id=:mf WHERE id=:i"),
@@ -4359,10 +4347,7 @@ def telegram_webhook():
                     return "OK", 200
                 
                 elif action == "withdrawalfailed":
-                    if not msg.get("reply_to_message"):
-                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
-                        return "OK", 200
-                    rep = msg["reply_to_message"]
+                    rep = msg
                     mt, mid, txt = save_content_from_reply(rep)
                     with engine.begin() as conn:
                         conn.execute(text("UPDATE bots SET withdrawal_failed_message=:t, withdrawal_failed_media_type=:mt, withdrawal_failed_media_file_id=:mf WHERE id=:i"),
@@ -4372,10 +4357,7 @@ def telegram_webhook():
                     return "OK", 200
                 
                 elif action == "withdrawalsubmitted":
-                    if not msg.get("reply_to_message"):
-                        send_message(token, chat_id, "⚠️ Please REPLY to prompt with content.", parse_mode="HTML")
-                        return "OK", 200
-                    rep = msg["reply_to_message"]
+                    rep = msg
                     mt, mid, txt = save_content_from_reply(rep)
                     with engine.begin() as conn:
                         conn.execute(text("UPDATE bots SET withdrawal_submitted_message=:t, withdrawal_submitted_media_type=:mt, withdrawal_submitted_media_file_id=:mf WHERE id=:i"),
