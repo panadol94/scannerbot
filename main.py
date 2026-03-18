@@ -3839,32 +3839,7 @@ def process_withdraw(bot_row, chat_id, user, text_msg):
 
     bal0 = float((urow0 or {}).get("balance") or 0)
 
-    # Try to parse requested amount — only match RM-prefixed or standalone leading number
-    # Avoids matching numbers inside usernames (e.g. "Cyber6777") or bank accounts
-    req_amt = None
-    try:
-        # Try RM prefix first: "RM50", "rm 100.50"
-        mamt = re.search(r'(?i)\brm\s*(\d+(?:\.\d+)?)', text_msg or "")
-        if not mamt:
-            # Fallback: standalone number at start of text (e.g. "50 Maybank 12345")
-            mamt = re.match(r'\s*(\d+(?:\.\d+)?)\s', text_msg or "")
-        if mamt:
-            req_amt = float(mamt.group(1))
-    except Exception:
-        req_amt = None
-
     if bal0 < float(min_wd):
-        bot_latest = get_bot_by_id(bot_id) or bot_row
-        failed_msg = build_withdraw_insufficient_msg(float(min_wd), float(bal0), bot_latest)
-        mt_f = bot_latest.get("withdrawal_failed_media_type")
-        mf_f = bot_latest.get("withdrawal_failed_media_file_id")
-        if mt_f and mf_f:
-            send_media(token, chat_id, mt_f, mf_f, caption=failed_msg, parse_mode="HTML")
-        else:
-            send_message(token, chat_id, failed_msg, parse_mode="HTML")
-        return
-
-    if req_amt is not None and req_amt > bal0:
         bot_latest = get_bot_by_id(bot_id) or bot_row
         failed_msg = build_withdraw_insufficient_msg(float(min_wd), float(bal0), bot_latest)
         mt_f = bot_latest.get("withdrawal_failed_media_type")
@@ -3881,18 +3856,12 @@ def process_withdraw(bot_row, chat_id, user, text_msg):
             text("INSERT INTO withdrawals (id, bot_id, user_id, request_text) VALUES (:id, :b, :u, :r)"),
             {"id": wid, "b": bot_id, "u": uid, "r": text_msg},
         )
-        urow = conn.execute(
-            text("SELECT balance FROM users WHERE bot_id=:b AND user_id=:u"),
-            {"b": bot_id, "u": uid},
-        ).mappings().first()
-
-    bal = float((urow or {}).get("balance") or 0)
 
     # Custom submitted message
     bot_latest_sub = get_bot_by_id(bot_id) or bot_row
     sub_tpl = (bot_latest_sub.get("withdrawal_submitted_message") or "").strip()
     if sub_tpl:
-        sub_msg = sub_tpl.replace("{balance}", f"RM{bal:.2f}")
+        sub_msg = sub_tpl.replace("{balance}", f"RM{bal0:.2f}")
         mt_s = bot_latest_sub.get("withdrawal_submitted_media_type")
         mf_s = bot_latest_sub.get("withdrawal_submitted_media_file_id")
         if mt_s and mf_s:
@@ -3902,21 +3871,22 @@ def process_withdraw(bot_row, chat_id, user, text_msg):
     else:
         send_message(token, chat_id, "✅ Request withdraw dihantar. Tunggu admin process ya Bossku 😘", parse_mode="HTML")
 
+    # Admin notification
     if bot_row.get("admin_group_id"):
+        uname = user.get("username")
+        uname_txt = f" (@{html.escape(uname)})" if uname else ""
         rpt = (
-            f"💰 <b>REQ WITHDRAW</b>\n"
-            f"User: <b>{html.escape(str(user.get('first_name') or '-'))}</b>\n"
-            f"UID: <code>{uid}</code>\n"
-            f"Bal: <b>RM{bal:.2f}</b>\n"
-            f"Req: {html.escape(text_msg)}\n"
-            f"ID: <code>{wid}</code>\n\n"
-            "Reply pada mesej ni:\n"
-            "• <code>/approve 50</code>\n"
-            "• <code>/reject</code>\n"
+            f"💰 <b>WITHDRAWAL REQUEST</b>\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"👤 <b>{html.escape(str(user.get('first_name') or '-'))}</b>{uname_txt}\n"
+            f"🆔 UID: <code>{uid}</code>\n"
+            f"💵 <b>Baki: RM{bal0:.2f}</b>\n"
+            f"📝 Detail: {html.escape(text_msg or '-')}\n"
+            f"🔖 ID: <code>{wid[:8]}</code>"
         )
         kb = {
             "inline_keyboard": [[
-                {"text": "✅ Approve", "callback_data": f"wd:ap:{wid}"},
+                {"text": f"✅ Approve RM{bal0:.2f}", "callback_data": f"wd:ap:{wid}"},
                 {"text": "❌ Reject", "callback_data": f"wd:rj:{wid}"},
             ]]
         }
