@@ -2256,7 +2256,8 @@ def list_admins(bot_id: str):
 def add_admin(bot_id: str, admin_user_id: int, added_by: int, days: Optional[int]):
     expiry_at = None
     if days is not None:
-        expiry_at = utcnow() + timedelta(days=int(days))
+        days = min(int(days), 3650)  # cap to ~10 years to prevent OverflowError
+        expiry_at = utcnow() + timedelta(days=days)
     with engine.begin() as conn:
         conn.execute(
             text("""
@@ -3432,6 +3433,10 @@ def send_contact_report_to_admin(bot_row: dict, latest_user: dict):
 # ---------------------------
 def handle_start(bot_row, chat_id, user, text_msg):
     bot_id, token = str(bot_row["id"]), bot_row["token"]
+    uid = user.get("id")
+    # Clear any stuck user state (e.g. await_addbot_token) on /start
+    if uid:
+        clear_user_state(bot_id, uid)
     parts = (text_msg or "").split()
     upline = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else None
 
@@ -4019,6 +4024,19 @@ def telegram_webhook():
 
 
         state = get_user_state(bot_id, uid)
+        if state:
+            # Auto-expire states older than 30 minutes
+            state_age = state.get("created_at")
+            if state_age:
+                from datetime import timezone
+                age_secs = (datetime.now(timezone.utc) - state_age).total_seconds() if hasattr(state_age, 'tzinfo') and state_age.tzinfo else (datetime.utcnow() - state_age).total_seconds()
+                if age_secs > 1800:  # 30 min
+                    clear_user_state(bot_id, uid)
+                    state = None
+            # Skip state handling for commands (let them fall through to command handlers)
+            if state and text_msg and text_msg.startswith("/"):
+                clear_user_state(bot_id, uid)
+                state = None
         if state:
             if state.get("state") == "await_withdraw" and text_msg:
                 process_withdraw(bot_row, chat_id, from_user, text_msg)
