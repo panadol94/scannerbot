@@ -232,6 +232,9 @@ def init_db():
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS group_contact_message_media_type TEXT;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS group_contact_message_media_file_id TEXT;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS withdrawal_prompt TEXT;    -- user prompt for withdraw
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS withdrawal_request_message TEXT;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS withdrawal_request_media_type TEXT;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS withdrawal_request_media_file_id TEXT;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS manual_approval BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS inplace_callbacks BOOLEAN NOT NULL DEFAULT FALSE;
 
@@ -3803,14 +3806,21 @@ def handle_withdraw_request(bot_row, chat_id, user):
 
     set_user_state(bot_id, user["id"], "await_withdraw")
 
-    prompt = bot_row.get("withdrawal_prompt") or (
+    # Custom withdrawal request message (with media support)
+    bot_latest_req = get_bot_by_id(bot_id) or bot_row
+    req_mt = bot_latest_req.get("withdrawal_request_media_type")
+    req_mf = bot_latest_req.get("withdrawal_request_media_file_id")
+    prompt = bot_latest_req.get("withdrawal_request_message") or bot_row.get("withdrawal_prompt") or (
         "💸 <b>WITHDRAWAL REQUEST</b>\n"
         "Bossku, sila taip detail lengkap:\n"
         "✅ <b>JUMLAH</b> + <b>BANK</b> + <b>NO AKAUN</b>\n\n"
         "Contoh:\n"
         "<i>RM50 Maybank 12345678</i>"
     )
-    send_message(bot_row["token"], chat_id, prompt, parse_mode="HTML")
+    if req_mt and req_mf:
+        send_media(bot_row["token"], chat_id, req_mt, req_mf, caption=prompt, parse_mode="HTML")
+    else:
+        send_message(bot_row["token"], chat_id, prompt, parse_mode="HTML")
 
 
 def process_withdraw(bot_row, chat_id, user, text_msg):
