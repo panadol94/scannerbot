@@ -1418,6 +1418,88 @@ def build_scanner_caption(firstname: str, provider_label: str, games: List[str],
     return "\n".join(lines_out)
 
 
+def build_scanner_text_result(firstname: str, provider_label: str, games: List[str], member_id: str = "", cache_key: tuple = None) -> str:
+    """Build final result as plain TEXT (up to 4096 chars). Uses same logic as build_scanner_caption but without the 1024 caption limit."""
+    firstname = firstname or "Boss"
+    pool = list(games)
+    random.shuffle(pool)
+
+    # Avoid repeating games from last scan
+    last_shown = _scan_last_games.get(cache_key, set()) if cache_key else set()
+    if last_shown:
+        fresh = [g for g in pool if g not in last_shown]
+        stale = [g for g in pool if g in last_shown]
+        random.shuffle(stale)
+        pool = fresh + stale
+        if not fresh:
+            random.shuffle(pool)
+            last_shown = set()
+
+    scan_id = f"SC-{random.randint(10000, 99999)}"
+
+    try:
+        now_local = datetime.now(LOCAL_TZ) if LOCAL_TZ else datetime.now()
+        stamp = now_local.strftime("%d %b %Y %H:%M")
+    except Exception:
+        stamp = datetime.now().strftime("%d %b %Y %H:%M")
+
+    sep = "━━━━━━━━━━━━━━━━━━"
+    mid_str = f" | 🆔 {html.escape(member_id)}" if member_id else ""
+
+    header = (
+        f"🔍 <b>SCAN RESULT — {html.escape(provider_label)}</b>\n"
+        f"{sep}\n"
+        f"📋 Scan ID: <code>#{scan_id}</code>\n"
+        f"👤 <b>{html.escape(firstname)}</b>{mid_str}"
+    )
+
+    # Pre-generate percentages
+    game_pcts = [(g, random.randint(34, 95)) for g in pool]
+    total_scanned = len(pool)
+
+    # Budget = 4096 (TG_MAX_TEXT)
+    footer_sample = (
+        f"{sep}\n"
+        f"📊 Scanned: <b>{total_scanned}</b> | 🔥 Hot: <b>99</b> | ⚡ Best: <b>95%</b>\n"
+        f"🕒 <i>{html.escape(stamp)}</i>\n"
+        f"⚠️ <i>Valid 15 minit sahaja</i>"
+    )
+
+    reserved = len(header) + 1 + len(sep) + 1 + len(footer_sample) + 1
+    budget = TG_MAX_TEXT - reserved
+
+    chosen = []
+    used = 0
+    for g, pct in game_pcts:
+        g_esc = html.escape(g)
+        if pct >= 80:
+            line = f"🟢 <b>{g_esc}</b> — <b>{pct}%</b>"
+        elif pct >= 60:
+            line = f"🟡 {g_esc} — {pct}%"
+        else:
+            line = f"🔴 {g_esc} — {pct}%"
+        if used + len(line) + 1 > budget:
+            break
+        chosen.append((g, line, pct))
+        used += len(line) + 1
+
+    if cache_key:
+        _scan_last_games[cache_key] = {g for g, _, _ in chosen}
+
+    hot_count = sum(1 for _, _, p in chosen if p >= 80)
+    best_pct = max((p for _, _, p in chosen), default=0)
+
+    footer = (
+        f"{sep}\n"
+        f"📊 Scanned: <b>{total_scanned}</b> | 🔥 Hot: <b>{hot_count}</b> | ⚡ Best: <b>{best_pct}%</b>\n"
+        f"🕒 <i>{html.escape(stamp)}</i>\n"
+        f"⚠️ <i>Valid 15 minit sahaja</i>"
+    )
+
+    lines_out = [header, sep] + [line for _, line, _ in chosen] + [footer]
+    return "\n".join(lines_out)
+
+
 def build_scanner_result_keyboard(provider: str) -> dict:
     """Inline keyboard untuk result scanner: Scan Kembali + Kembali ke Menu Scanner."""
     provider_clean = norm_provider(provider)
@@ -1651,6 +1733,33 @@ def send_scanner_result_edit(token: str, chat_id: int, message_id: int, firstnam
         return True
     except Exception:
         return False
+
+
+def send_scanner_loading_media(token: str, chat_id: int, provider: str = "") -> dict:
+    """Send a loading media message. Returns dict with 'message_id' and 'chat_id' for cleanup."""
+    prov = (provider or "").strip().upper()
+    loading_text = f"🔍 <b>SEDANG SCAN {prov or 'PROVIDER'}...</b>\n⏳ Sila tunggu sebentar..."
+    result = send_message(token, chat_id, loading_text, parse_mode="HTML")
+    return {"message_id": None, "chat_id": chat_id, "ok": result}
+
+
+def send_scanner_loading_text(token: str, chat_id: int, provider: str = "") -> dict:
+    """Send a loading text message. Returns dict with 'message_id' for cleanup."""
+    prov = (provider or "").strip().upper()
+    lines = random.sample(SCAN_BM_FRAMES, min(2, len(SCAN_BM_FRAMES)))
+    combined = "\n".join(l.format(prov=prov) for l in lines)
+    result = send_message(token, chat_id, combined, parse_mode="HTML")
+    return {"message_id": None, "chat_id": chat_id, "ok": result}
+
+
+def send_scanner_final_text(token: str, chat_id: int, firstname: str, provider: str, games: List[str], member_id: str = "", cache_key: tuple = None) -> dict:
+    """Send final scan result as text message (up to 4096 chars). Returns send result."""
+    provider_clean = norm_provider(provider)
+    provider_label = provider_clean.upper() if provider_clean else provider
+    text = build_scanner_text_result(firstname, provider_label, games, member_id=member_id, cache_key=cache_key)
+    kb = build_scanner_result_keyboard(provider)
+    result = send_message(token, chat_id, text, reply_markup=kb, parse_mode="HTML")
+    return {"ok": result}
 
 
 def require_admin(bot_row: dict, uid: int) -> bool:
