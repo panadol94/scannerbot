@@ -5410,7 +5410,7 @@ def telegram_webhook():
             answer_callback(token, cq["id"], "Checking…", show_alert=False)
             bot_row2 = get_bot_by_id(bot_id) or bot_row
             if ensure_access(bot_row2, chat_id, uid, user_row):
-                send_message(token, chat_id, "✅ Dah lepas gate Bossku. Teruskan 😘", parse_mode="HTML")
+                send_message(token, chat_id, "✅ Akses dah dibuka. Sila tekan /start", parse_mode="HTML")
             return "OK", 200
 
         # Admin approve buttons (manual approval)
