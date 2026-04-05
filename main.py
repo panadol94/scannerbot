@@ -4711,17 +4711,6 @@ def telegram_webhook():
                 ).start()
                 return "OK", 200
 
-            # JOINLOCK set list
-            elif text_msg.startswith("/setjoin"):
-                if msg.get("reply_to_message"):
-                    raw = (msg["reply_to_message"].get("text") or "").strip()
-                else:
-                    parts = text_msg.split(maxsplit=1)
-                    raw = parts[1].strip() if len(parts) > 1 else ""
-                with engine.begin() as conn:
-                    conn.execute(text("UPDATE bots SET join_targets=:t WHERE id=:i"), {"t": raw, "i": bot_id})
-                send_message(token, chat_id, "✅ join_targets updated.", parse_mode="HTML")
-
             elif text_msg.startswith("/setjoinmsg"):
                 if not msg.get("reply_to_message"):
                     send_message(token, chat_id, "❌ Reply ke mesej yang kau nak jadikan <b>JoinLock message</b>, kemudian tulis <code>/setjoinmsg</code>", parse_mode="HTML")
@@ -4730,6 +4719,17 @@ def telegram_webhook():
                     with engine.begin() as conn:
                         conn.execute(text("UPDATE bots SET join_message=:t, join_message_media_type=:mt, join_message_media_file_id=:mf WHERE id=:i"), {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
                     send_message(token, chat_id, "✅ join_message updated.", parse_mode="HTML")
+
+            # JOINLOCK set list
+            elif text_msg.startswith("/setjoin"):
+                if msg.get("reply_to_message"):
+                    raw = (msg["reply_to_message"].get("text") or msg["reply_to_message"].get("caption") or "").strip()
+                else:
+                    parts = text_msg.split(maxsplit=1)
+                    raw = parts[1].strip() if len(parts) > 1 else ""
+                with engine.begin() as conn:
+                    conn.execute(text("UPDATE bots SET join_targets=:t WHERE id=:i"), {"t": raw, "i": bot_id})
+                send_message(token, chat_id, "✅ join_targets updated.", parse_mode="HTML")
 
             elif text_msg.startswith("/setcontactmsg"):
                 if not msg.get("reply_to_message"):
