@@ -1777,45 +1777,23 @@ def send_scanner_result_edit(token: str, chat_id: int, message_id: int, firstnam
     except Exception:
         return False
 
+def run_scanner_flow(token: str, chat_id: int, message_id: int, firstname: str, provider: str, media, games: List[str], member_id: str = "", cache_key: tuple = None, bot_row: Optional[dict] = None) -> None:
+    """Single scanner flow entrypoint: duration-aware loading animation, then final media+caption result."""
+    scan_duration = get_scanner_duration_seconds(bot_row)
 
-def send_scanner_loading_media(token: str, chat_id: int, provider: str = "") -> dict:
-    """Send a loading media message. Returns dict with 'message_id' and 'chat_id' for cleanup."""
-    prov = (provider or "").strip().upper()
-    loading_text = f"🔍 <b>SEDANG SCAN {prov or 'PROVIDER'}...</b>\n⏳ Sila tunggu sebentar..."
-    result = send_message(token, chat_id, loading_text, parse_mode="HTML")
-    return {"message_id": (result or {}).get("message_id"), "chat_id": chat_id, "ok": result}
+    try:
+        animate_scanning_progress(
+            token,
+            chat_id,
+            message_id,
+            provider=provider,
+            total_seconds=scan_duration,
+        )
+    except Exception:
+        pass
 
-
-def send_scanner_loading_text(token: str, chat_id: int, provider: str = "") -> dict:
-    """Send a loading text message. Returns dict with 'message_id' for cleanup."""
-    prov = (provider or "").strip().upper()
-    lines = random.sample(SCAN_BM_FRAMES, min(2, len(SCAN_BM_FRAMES)))
-    combined = "\n".join(l.format(prov=prov) for l in lines)
-    result = send_message(token, chat_id, combined, parse_mode="HTML")
-    return {"message_id": (result or {}).get("message_id"), "chat_id": chat_id, "ok": result}
-
-
-def send_scanner_final_text(token: str, chat_id: int, firstname: str, provider: str, games: List[str], member_id: str = "", cache_key: tuple = None) -> dict:
-    """Send final scan result as text message (up to 4096 chars). Returns send result."""
-    provider_clean = norm_provider(provider)
-    provider_label = provider_clean.upper() if provider_clean else provider
-    text = build_scanner_text_result(firstname, provider_label, games, member_id=member_id, cache_key=cache_key)
-    kb = build_scanner_result_keyboard(provider)
-    result = send_message(token, chat_id, text, reply_markup=kb, parse_mode="HTML")
-    return {"ok": result}
-
-
-def send_scanning_progress_text(token: str, chat_id: int, message_id: int, provider: str = "", step: int = 1, total: int = 3) -> bool:
-    """Lightweight progress update — only 2-3 steps max. Returns True if edited OK."""
-    if not chat_id or not message_id:
-        return False
-    prov = (provider or "").strip().upper()
-    ico = random.choice(["🔍","🕵️","📊","🎯","⚡"])
-    pct = int((step / total) * 100)
-    bar = "▓" * (step) + "░" * (total - step)
-    text = f"{ico} <b>SEDANG SCAN {prov}...</b>\n<code>[{bar}] {pct}%</code>\n<i>Mengumpul data...</i>"
-    ok = edit_message(token, chat_id, message_id, text, parse_mode="HTML")
-    return ok is not None
+    if not send_scanner_result_edit(token, chat_id, message_id, firstname, provider, media, games, member_id=member_id, cache_key=cache_key):
+        send_scanner_result(token, chat_id, firstname, provider, _coerce_media_dict(media), games, member_id=member_id, cache_key=cache_key)
 
 
 def require_admin(bot_row: dict, uid: int) -> bool:
@@ -5739,21 +5717,18 @@ def telegram_webhook():
                             firstname = (from_user.get("first_name") or "").strip()
                             _mid = str((urow_gate or {}).get("member_id") or "")
                             bot_latest = get_bot_by_id(bot_id) or bot_row
-                            scan_duration = get_scanner_duration_seconds(bot_latest)
-                            # Restore original scanner result flow: animate current message, then show result as media + caption.
-                            try:
-                                animate_scanning_progress(
-                                    token,
-                                    chat_id,
-                                    message_id,
-                                    provider=key,
-                                    total_seconds=scan_duration,
-                                )
-                            except Exception:
-                                pass
-
-                            if not send_scanner_result_edit(token, chat_id, message_id, firstname, key, media, games, member_id=_mid, cache_key=(bot_id, uid, key)):
-                                send_scanner_result(token, chat_id, firstname, key, _coerce_media_dict(media), games, member_id=_mid, cache_key=(bot_id, uid, key))
+                            run_scanner_flow(
+                                token,
+                                chat_id,
+                                message_id,
+                                firstname,
+                                key,
+                                media,
+                                games,
+                                member_id=_mid,
+                                cache_key=(bot_id, uid, key),
+                                bot_row=bot_latest,
+                            )
                             return "OK", 200
                 except Exception as e:
                     logger.exception("scanner fallback error: %s", e)
