@@ -2083,7 +2083,7 @@ def build_join_keyboard(bot_token: str, targets: List[str], extra_markup: Option
     return merged, unresolved
 
 
-def ensure_joined(bot_row: dict, chat_id: int, uid: int) -> bool:
+def ensure_joined(bot_row: dict, chat_id: int, uid: int, user_row: Optional[dict] = None) -> bool:
     if not bot_row.get("join_lock"):
         return True
 
@@ -2116,7 +2116,17 @@ def ensure_joined(bot_row: dict, chat_id: int, uid: int) -> bool:
         + "\n\nLepas join, tekan <b>🔁 Saya Dah Join</b>."
     )
 
-    msg_text, custom_markup = parse_buttons(msg_template)
+    join_user = user_row or {
+        "user_id": uid,
+        "first_name": "Boss",
+        "username": None,
+        "balance": 0,
+        "shared_count": 0,
+        "member_id": "000000",
+    }
+    msg_rendered = render_placeholders(msg_template, bot_row.get("bot_username") or "", join_user)
+    share_q = make_share_query(bot_row.get("bot_username") or "", join_user)
+    msg_text, custom_markup = parse_buttons(msg_rendered, share_inline_query=share_q)
     kb, unresolved = build_join_keyboard(token, missing, extra_markup=custom_markup)
 
     if bot_row.get("join_message") and unresolved:
@@ -2192,7 +2202,7 @@ def ensure_premium_if_needed(bot_row: dict, chat_id: int, uid: int, user_row: di
 
 
 def ensure_access(bot_row: dict, chat_id: int, uid: int, user_row: dict) -> bool:
-    if not ensure_joined(bot_row, chat_id, uid):
+    if not ensure_joined(bot_row, chat_id, uid, user_row):
         return False
     if not ensure_contact_verified(bot_row, chat_id, user_row):
         return False
