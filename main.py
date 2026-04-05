@@ -5740,55 +5740,20 @@ def telegram_webhook():
                             _mid = str((urow_gate or {}).get("member_id") or "")
                             bot_latest = get_bot_by_id(bot_id) or bot_row
                             scan_duration = get_scanner_duration_seconds(bot_latest)
-                            # NEW FLOW: Phase 5 — loading media + light progress + final TEXT result
-                            loading_media_result = None
+                            # Restore original scanner result flow: animate current message, then show result as media + caption.
                             try:
-                                # Step 1: send loading media (separate message, new message_id)
-                                loading_media_result = send_scanner_loading_media(token, chat_id, provider=key)
-                            except Exception as e:
-                                logger.info(f"Loading media skipped: {e}")
+                                animate_scanning_progress(
+                                    token,
+                                    chat_id,
+                                    message_id,
+                                    provider=key,
+                                    total_seconds=scan_duration,
+                                )
+                            except Exception:
+                                pass
 
-                            # Step 2: send loading text (will be edited for progress)
-                            loading_text_result = None
-                            try:
-                                loading_text_result = send_scanner_loading_text(token, chat_id, provider=key)
-                            except Exception as e:
-                                logger.info(f"Loading text skipped: {e}")
-
-                            # Step 3: loading progress (1 text = 5s, total text count depends on preset)
-                            loading_msg_id = (loading_text_result or {}).get("message_id")
-                            if loading_msg_id:
-                                try:
-                                    animate_scanning_progress(
-                                        token,
-                                        chat_id,
-                                        loading_msg_id,
-                                        provider=key,
-                                        total_seconds=scan_duration,
-                                    )
-                                except Exception:
-                                    pass
-
-                            # Step 4: build and send FINAL result as TEXT (new message, up to 4096 chars)
-                            final_result = None
-                            try:
-                                final_result = send_scanner_final_text(token, chat_id, firstname, key, games, member_id=_mid, cache_key=(bot_id, uid, key))
-                            except Exception as e:
-                                logger.error(f"send_scanner_final_text failed: {e}")
-
-                            # Step 5: cleanup loading text message (best effort)
-                            if loading_msg_id:
-                                try:
-                                    delete_message(token, chat_id, loading_msg_id)
-                                except Exception:
-                                    pass  # best effort, don't block on cleanup failure
-
-                            # Step 6: cleanup loading media message if we have a separate message_id
-                            if loading_media_result and loading_media_result.get("message_id"):
-                                try:
-                                    delete_message(token, chat_id, loading_media_result["message_id"])
-                                except Exception:
-                                    pass  # best effort
+                            if not send_scanner_result_edit(token, chat_id, message_id, firstname, key, media, games, member_id=_mid, cache_key=(bot_id, uid, key)):
+                                send_scanner_result(token, chat_id, firstname, key, _coerce_media_dict(media), games, member_id=_mid, cache_key=(bot_id, uid, key))
                             return "OK", 200
                 except Exception as e:
                     logger.exception("scanner fallback error: %s", e)
