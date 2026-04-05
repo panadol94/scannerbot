@@ -854,7 +854,7 @@ def parse_buttons(text_: str, share_inline_query: Optional[str] = None) -> Tuple
 
     for line in lines:
         if line.startswith("!"):
-            m = re.match(r"!(\d+)(link|callback|share|withdrawal)\s+(.+)$", line.strip())
+            m = re.match(r"!(\d+)(link|callback|share|withdrawal|web)\s+(.+)$", line.strip())
             if m:
                 row, typ, content = int(m.group(1)), m.group(2), m.group(3).strip()
                 rows.setdefault(row, [])
@@ -2016,6 +2016,11 @@ def tg_get_chat_member(bot_token: str, chat_ref: str, user_id: int):
     return tg_call(bot_token, "getChatMember", data=data)
 
 
+def tg_get_chat(bot_token: str, chat_ref: str):
+    data = {"chat_id": chat_ref}
+    return tg_call(bot_token, "getChat", data=data)
+
+
 def parse_join_targets(raw: Optional[str]) -> List[str]:
     if not raw:
         return []
@@ -2027,15 +2032,55 @@ def parse_join_targets(raw: Optional[str]) -> List[str]:
     return items
 
 
-def build_join_keyboard(targets: List[str]) -> Optional[dict]:
-    rows = []
+def build_join_buttons(bot_token: str, targets: List[str]) -> Tuple[List[List[dict]], List[str]]:
+    rows: List[List[dict]] = []
+    unresolved: List[str] = []
     for t in targets[:8]:
-        if t.startswith("@"):
-            rows.append([{"text": f"✅ Join {t}", "url": f"https://t.me/{t.lstrip('@')}"}])
-    if rows:
-        rows.append([{"text": "🔁 Saya Dah Join", "callback_data": "gate:recheck"}])
-        return {"inline_keyboard": rows}
-    return {"inline_keyboard": [[{"text": "🔁 Saya Dah Join", "callback_data": "gate:recheck"}]]}
+        target = (t or "").strip()
+        if not target:
+            continue
+
+        btn = None
+        if target.startswith("@"):
+            btn = {"text": f"✅ Join {target}", "url": f"https://t.me/{target.lstrip('@')}"}
+        else:
+            try:
+                chat = tg_get_chat(bot_token, target) or {}
+                username = (chat.get("username") or "").strip()
+                invite_link = (chat.get("invite_link") or "").strip()
+                title = (chat.get("title") or chat.get("username") or target).strip()
+                if username:
+                    btn = {"text": f"✅ Join {title}", "url": f"https://t.me/{username}"}
+                elif invite_link:
+                    btn = {"text": f"✅ Join {title}", "url": invite_link}
+            except Exception:
+                btn = None
+
+        if btn:
+            rows.append([btn])
+        else:
+            unresolved.append(target)
+
+    return rows, unresolved
+
+
+def merge_inline_keyboards(*markups) -> Optional[dict]:
+    rows: List[list] = []
+    for mk in markups:
+        if not mk:
+            continue
+        for row in (mk.get("inline_keyboard") or []):
+            if row:
+                rows.append(row)
+    return {"inline_keyboard": rows} if rows else None
+
+
+def build_join_keyboard(bot_token: str, targets: List[str], extra_markup: Optional[dict] = None) -> Tuple[Optional[dict], List[str]]:
+    join_rows, unresolved = build_join_buttons(bot_token, targets)
+    join_markup = {"inline_keyboard": join_rows} if join_rows else None
+    recheck_markup = {"inline_keyboard": [[{"text": "🔁 Saya Dah Join", "callback_data": "gate:recheck"}]]}
+    merged = merge_inline_keyboards(extra_markup, join_markup, recheck_markup)
+    return merged, unresolved
 
 
 def ensure_joined(bot_row: dict, chat_id: int, uid: int) -> bool:
@@ -2063,15 +2108,28 @@ def ensure_joined(bot_row: dict, chat_id: int, uid: int) -> bool:
     if not missing:
         return True
 
-    msg = bot_row.get("join_message") or (
+    msg_template = bot_row.get("join_message") or (
         "🧲 <b>AKSES TERKUNCI</b>\n"
         "Bossku kena join channel/group dulu baru boleh guna bot 😘\n\n"
         "Sila join:\n"
         + "\n".join([f"• <code>{html.escape(x)}</code>" for x in missing])
         + "\n\nLepas join, tekan <b>🔁 Saya Dah Join</b>."
     )
-    kb = build_join_keyboard(missing)
-    send_message(token, chat_id, msg, reply_markup=kb, parse_mode="HTML")
+
+    msg_text, custom_markup = parse_buttons(msg_template)
+    kb, unresolved = build_join_keyboard(token, missing, extra_markup=custom_markup)
+
+    if bot_row.get("join_message") and unresolved:
+        unresolved_txt = "\n".join([f"• <code>{html.escape(x)}</code>" for x in unresolved])
+        if unresolved_txt:
+            msg_text = (msg_text + "\n\nSila join:\n" + unresolved_txt + "\n\nLepas join, tekan <b>🔁 Saya Dah Join</b>.").strip()
+
+    mt = bot_row.get("join_message_media_type")
+    mf = bot_row.get("join_message_media_file_id")
+    if mt and mf:
+        send_media(token, chat_id, mt, mf, caption=msg_text, reply_markup=kb, parse_mode="HTML")
+    else:
+        send_message(token, chat_id, msg_text, reply_markup=kb, parse_mode="HTML")
     return False
 
 
@@ -5929,6 +5987,12 @@ def telegram_webhook():
 
             if action in ("lock", "join", "manual", "inplace"):
                 val = (parts[2] == "on") if len(parts) > 2 else False
+                if action == "join" and val:
+                    bot_row_latest = get_bot_by_id(bot_id) or bot_row
+                    if not parse_join_targets(bot_row_latest.get("join_targets")):
+                        answer_callback(token, cq["id"], "Set join targets dulu guna /setjoin @channel", show_alert=True)
+                        send_message(token, chat_id, "⚠️ <b>JoinLock perlukan join target</b>\n\nSet dulu contoh:\n<code>/setjoin @channelanda</code>\natau\n<code>/setjoin @channel1,@channel2</code>", parse_mode="HTML")
+                        return "OK", 200
                 col = {
                     "lock": "lock_bot",
                     "join": "join_lock",
