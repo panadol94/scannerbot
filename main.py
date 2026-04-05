@@ -289,6 +289,7 @@ def init_db():
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS scan_limit_message TEXT;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS scan_limit_message_media_type TEXT;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS scan_limit_message_media_file_id TEXT;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS scanner_duration_seconds INT NOT NULL DEFAULT 25;
 
     CREATE TABLE IF NOT EXISTS scan_daily_usage (
       bot_id UUID NOT NULL,
@@ -1657,19 +1658,61 @@ SCAN_BM_FRAMES = [
     "🎨 <b>Styling {prov} results...</b>",
     "🏅 <b>Ranking {prov} winners...</b>",
     "🎉 <b>Celebrating {prov} finds...</b>",
+    "🧠 <b>Menganalisis corak kemenangan {prov}...</b>",
+    "🛰️ <b>Mengimbas signal RTP tersembunyi {prov}...</b>",
+    "🧬 <b>Menyusun DNA pattern slot {prov}...</b>",
+    "📡 <b>Mengesan momentum spin aktif {prov}...</b>",
+    "🎯 <b>Menapis result paling padu untuk {prov}...</b>",
 ]
 
-def animate_scanning_progress(token: str, chat_id: int, message_id: int, provider: str = "", cycles: int = 1, delay: float = 0.55) -> None:
-    """Edit mesej semasa untuk tunjuk animasi scanning BM + progress bar with RANDOM messages."""
+SCAN_DURATION_PRESETS = (15, 25, 40, 60)
+DEFAULT_SCANNER_DURATION_SECONDS = 25
+SCANNER_LOADING_TEXT_DELAY_SECONDS = 5
+
+
+def get_scanner_duration_seconds(bot_row: Optional[dict]) -> int:
+    raw = (bot_row or {}).get("scanner_duration_seconds")
+    try:
+        val = int(raw)
+    except Exception:
+        val = DEFAULT_SCANNER_DURATION_SECONDS
+    if val not in SCAN_DURATION_PRESETS:
+        return DEFAULT_SCANNER_DURATION_SECONDS
+    return val
+
+
+def scanner_duration_label(seconds: int) -> str:
+    sec = int(seconds or DEFAULT_SCANNER_DURATION_SECONDS)
+    return f"{sec}s"
+
+
+def scanner_loading_text_count(seconds: int) -> int:
+    try:
+        sec = int(seconds or DEFAULT_SCANNER_DURATION_SECONDS)
+    except Exception:
+        sec = DEFAULT_SCANNER_DURATION_SECONDS
+    if sec <= 0:
+        sec = DEFAULT_SCANNER_DURATION_SECONDS
+    return max(1, int(sec / SCANNER_LOADING_TEXT_DELAY_SECONDS))
+
+def animate_scanning_progress(token: str, chat_id: int, message_id: int, provider: str = "", total_seconds: int = DEFAULT_SCANNER_DURATION_SECONDS) -> None:
+    """Edit mesej scanner ikut tempoh preset dengan 1 text = 5 saat fixed."""
     if not chat_id or not message_id:
         return
     prov = (provider or "").strip().upper()
-    icons = ["🕛","🕐","🕑","🕒","🕓","🕔","🕕","🕖","🕗","🕘","🕙","🕚"]
-    total_steps = max(1, len(icons) * max(1, int(cycles)))
+    try:
+        total_seconds = int(total_seconds or DEFAULT_SCANNER_DURATION_SECONDS)
+    except Exception:
+        total_seconds = DEFAULT_SCANNER_DURATION_SECONDS
+    if total_seconds <= 0:
+        total_seconds = DEFAULT_SCANNER_DURATION_SECONDS
+
+    total_steps = scanner_loading_text_count(total_seconds)
+    delay = float(SCANNER_LOADING_TEXT_DELAY_SECONDS)
+    icons = ["🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛"]
 
     for i in range(total_steps):
         ico = icons[i % len(icons)]
-        # RANDOM selection from 100 messages instead of cycling!
         line = random.choice(SCAN_BM_FRAMES).format(prov=prov)
         pct = int(((i + 1) / total_steps) * 100)
         filled = max(0, min(10, pct // 10))
@@ -1740,7 +1783,7 @@ def send_scanner_loading_media(token: str, chat_id: int, provider: str = "") -> 
     prov = (provider or "").strip().upper()
     loading_text = f"🔍 <b>SEDANG SCAN {prov or 'PROVIDER'}...</b>\n⏳ Sila tunggu sebentar..."
     result = send_message(token, chat_id, loading_text, parse_mode="HTML")
-    return {"message_id": None, "chat_id": chat_id, "ok": result}
+    return {"message_id": (result or {}).get("message_id"), "chat_id": chat_id, "ok": result}
 
 
 def send_scanner_loading_text(token: str, chat_id: int, provider: str = "") -> dict:
@@ -1749,7 +1792,7 @@ def send_scanner_loading_text(token: str, chat_id: int, provider: str = "") -> d
     lines = random.sample(SCAN_BM_FRAMES, min(2, len(SCAN_BM_FRAMES)))
     combined = "\n".join(l.format(prov=prov) for l in lines)
     result = send_message(token, chat_id, combined, parse_mode="HTML")
-    return {"message_id": None, "chat_id": chat_id, "ok": result}
+    return {"message_id": (result or {}).get("message_id"), "chat_id": chat_id, "ok": result}
 
 
 def send_scanner_final_text(token: str, chat_id: int, firstname: str, provider: str, games: List[str], member_id: str = "", cache_key: tuple = None) -> dict:
@@ -1760,6 +1803,19 @@ def send_scanner_final_text(token: str, chat_id: int, firstname: str, provider: 
     kb = build_scanner_result_keyboard(provider)
     result = send_message(token, chat_id, text, reply_markup=kb, parse_mode="HTML")
     return {"ok": result}
+
+
+def send_scanning_progress_text(token: str, chat_id: int, message_id: int, provider: str = "", step: int = 1, total: int = 3) -> bool:
+    """Lightweight progress update — only 2-3 steps max. Returns True if edited OK."""
+    if not chat_id or not message_id:
+        return False
+    prov = (provider or "").strip().upper()
+    ico = random.choice(["🔍","🕵️","📊","🎯","⚡"])
+    pct = int((step / total) * 100)
+    bar = "▓" * (step) + "░" * (total - step)
+    text = f"{ico} <b>SEDANG SCAN {prov}...</b>\n<code>[{bar}] {pct}%</code>\n<i>Mengumpul data...</i>"
+    ok = edit_message(token, chat_id, message_id, text, parse_mode="HTML")
+    return ok is not None
 
 
 def require_admin(bot_row: dict, uid: int) -> bool:
@@ -2213,6 +2269,7 @@ def clone_bot_data(source_bot_id: str, target_bot_id: str, chat_id: int = 0) -> 
         "affiliate_amount", "min_withdraw_amount",
         "scan_limit_per_day", "scan_limit_message",
         "scan_limit_message_media_type", "scan_limit_message_media_file_id",
+        "scanner_duration_seconds",
         "withdrawal_approve_message", "withdrawal_approve_media_type", "withdrawal_approve_media_file_id",
         "withdrawal_reject_message", "withdrawal_reject_media_type", "withdrawal_reject_media_file_id",
     ]
@@ -2829,6 +2886,8 @@ def build_settings_text(bot_row: dict, stats: dict, cb_total: int, cb_rows: list
     # Scan configuration
     scan_limit = bot_row.get("scan_limit_per_day")
     scan_status = "♾️ UNLIMITED" if not scan_limit else f"🔢 {int(scan_limit)}/day"
+    scan_duration = get_scanner_duration_seconds(bot_row)
+    scan_loading_count = scanner_loading_text_count(scan_duration)
 
     txt = (
         "⚙️ <b>ADMIN CONTROL PANEL</b>\n"
@@ -2847,6 +2906,7 @@ def build_settings_text(bot_row: dict, stats: dict, cb_total: int, cb_rows: list
         f"✅ Manual: {manual} | 🧩 Inplace: {inplace}\n"
         f"💵 Share: <b>RM{share_amt:.2f}</b> | 🏧 Min WD: <b>RM{min_wd:.2f}</b>\n"
         f"🎰 Scan Limit: {scan_status}\n"
+        f"⏱️ Scan Loading: <b>{scanner_duration_label(scan_duration)}</b> ({scan_loading_count} text × 5s)\n"
         f"🧩 Callbacks: <b>{cb_total}</b>\n"
         "\n"
         "━━━━━━━━━━━━━━━━━━\n"
@@ -3092,9 +3152,20 @@ def build_settings_keyboard_by_category(bot_row: dict, cat: str, page: int, page
         ])
 
     elif cat == "scanner":
+        cur_scan_duration = get_scanner_duration_seconds(bot_row)
+        cur_scan_loading_count = scanner_loading_text_count(cur_scan_duration)
         kb["inline_keyboard"].extend([
             [{"text": "🎰 SCANNER MANAGEMENT", "callback_data": "st:noop"}],
             [{"text": "⚙️ Set Global Limit", "callback_data": "st:scan:setglobal"}],
+            [{"text": f"⏳ Scanner Loading: {scanner_duration_label(cur_scan_duration)} ({cur_scan_loading_count}×5s)", "callback_data": "st:noop"}],
+            [
+                {"text": ("✅ 15s" if cur_scan_duration == 15 else "15s"), "callback_data": "st:scan:dur:15"},
+                {"text": ("✅ 25s" if cur_scan_duration == 25 else "25s"), "callback_data": "st:scan:dur:25"},
+            ],
+            [
+                {"text": ("✅ 40s" if cur_scan_duration == 40 else "40s"), "callback_data": "st:scan:dur:40"},
+                {"text": ("✅ 60s" if cur_scan_duration == 60 else "60s"), "callback_data": "st:scan:dur:60"},
+            ],
             [{"text": "📊 View Usage", "callback_data": "st:scan:viewusage"},
              {"text": "🔄 Reset Usage", "callback_data": "st:scan:reset"}],
             [{"text": "✏️ Custom Limit Msg", "callback_data": "st:scan:editmsg"}],
@@ -5667,13 +5738,57 @@ def telegram_webhook():
 
                             firstname = (from_user.get("first_name") or "").strip()
                             _mid = str((urow_gate or {}).get("member_id") or "")
-                            # BM rotation + progress bar (edit in-place)
+                            bot_latest = get_bot_by_id(bot_id) or bot_row
+                            scan_duration = get_scanner_duration_seconds(bot_latest)
+                            # NEW FLOW: Phase 5 — loading media + light progress + final TEXT result
+                            loading_media_result = None
                             try:
-                                animate_scanning_progress(token, chat_id, message_id, provider=key, cycles=1, delay=0.55)
-                            except Exception:
-                                pass
-                            if not send_scanner_result_edit(token, chat_id, message_id, firstname, key, media, games, member_id=_mid, cache_key=(bot_id, uid, key)):
-                                send_scanner_result(token, chat_id, firstname, key, _coerce_media_dict(media), games, member_id=_mid, cache_key=(bot_id, uid, key))
+                                # Step 1: send loading media (separate message, new message_id)
+                                loading_media_result = send_scanner_loading_media(token, chat_id, provider=key)
+                            except Exception as e:
+                                logger.info(f"Loading media skipped: {e}")
+
+                            # Step 2: send loading text (will be edited for progress)
+                            loading_text_result = None
+                            try:
+                                loading_text_result = send_scanner_loading_text(token, chat_id, provider=key)
+                            except Exception as e:
+                                logger.info(f"Loading text skipped: {e}")
+
+                            # Step 3: loading progress (1 text = 5s, total text count depends on preset)
+                            loading_msg_id = (loading_text_result or {}).get("message_id")
+                            if loading_msg_id:
+                                try:
+                                    animate_scanning_progress(
+                                        token,
+                                        chat_id,
+                                        loading_msg_id,
+                                        provider=key,
+                                        total_seconds=scan_duration,
+                                    )
+                                except Exception:
+                                    pass
+
+                            # Step 4: build and send FINAL result as TEXT (new message, up to 4096 chars)
+                            final_result = None
+                            try:
+                                final_result = send_scanner_final_text(token, chat_id, firstname, key, games, member_id=_mid, cache_key=(bot_id, uid, key))
+                            except Exception as e:
+                                logger.error(f"send_scanner_final_text failed: {e}")
+
+                            # Step 5: cleanup loading text message (best effort)
+                            if loading_msg_id:
+                                try:
+                                    delete_message(token, chat_id, loading_msg_id)
+                                except Exception:
+                                    pass  # best effort, don't block on cleanup failure
+
+                            # Step 6: cleanup loading media message if we have a separate message_id
+                            if loading_media_result and loading_media_result.get("message_id"):
+                                try:
+                                    delete_message(token, chat_id, loading_media_result["message_id"])
+                                except Exception:
+                                    pass  # best effort
                             return "OK", 200
                 except Exception as e:
                     logger.exception("scanner fallback error: %s", e)
@@ -5922,6 +6037,26 @@ def telegram_webhook():
 
             if action == "scan":
                 sub = parts[2] if len(parts) > 2 else ""
+
+                if sub == "dur":
+                    raw_dur = parts[3] if len(parts) > 3 else ""
+                    try:
+                        dur = int(raw_dur)
+                    except Exception:
+                        answer_callback(token, cq["id"], "Invalid duration", show_alert=True)
+                        return "OK", 200
+
+                    if dur not in SCAN_DURATION_PRESETS:
+                        answer_callback(token, cq["id"], "Preset tak valid", show_alert=True)
+                        return "OK", 200
+
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET scanner_duration_seconds=:d WHERE id=:i"), {"d": dur, "i": bot_id})
+
+                    answer_callback(token, cq["id"], f"Scanner loading set: {dur}s ({scanner_loading_text_count(dur)} text)")
+                    bot_row2 = get_bot_by_id(bot_id) or bot_row
+                    send_or_edit_settings_panel(bot_row2, chat_id, uid, page=1, edit_ctx={"message_id": message_id}, cat="scanner")
+                    return "OK", 200
                 
                 if sub == "setglobal":
                     bot_row2 = get_bot_by_id(bot_id) or bot_row
