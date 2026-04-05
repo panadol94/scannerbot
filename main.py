@@ -1367,8 +1367,40 @@ def build_scanner_caption(firstname: str, provider_label: str, games: List[str],
         f"👤 <b>{html.escape(firstname)}</b>{mid_str}"
     )
 
-    # Pre-generate percentages for all games
-    game_pcts = [(g, random.randint(34, 95)) for g in pool]
+    # Pre-generate percentages with a more realistic spread
+    game_pcts = []
+    for g in pool:
+        roll = random.random()
+        if roll < 0.15:
+            pct = random.randint(80, 95)
+        elif roll < 0.65:
+            pct = random.randint(60, 79)
+        else:
+            pct = random.randint(34, 59)
+        game_pcts.append((g, pct))
+
+    greens = sorted([item for item in game_pcts if item[1] >= 80], key=lambda item: item[1], reverse=True)
+    yellows = sorted([item for item in game_pcts if 60 <= item[1] < 80], key=lambda item: item[1], reverse=True)
+    reds = sorted([item for item in game_pcts if item[1] < 60], key=lambda item: item[1], reverse=True)
+
+    # Guarantee at least some red results for the visible list when game pool is big enough
+    min_reds = 2 if len(pool) >= 10 else (1 if len(pool) >= 5 else 0)
+    while len(reds) < min_reds and yellows:
+        g, _old_pct = yellows.pop()
+        new_pct = random.randint(40, 59)
+        reds.append((g, new_pct))
+    reds.sort(key=lambda item: item[1], reverse=True)
+
+    # Visible ordering: greens first, then yellows, then reds so color pattern remains obvious in caption
+    visible_green_cap = max(2, min(4, max(1, len(pool) // 7)))
+    visible_yellow_cap = max(3, min(6, max(2, len(pool) // 4)))
+    game_pcts = (
+        greens[:visible_green_cap]
+        + yellows[:visible_yellow_cap]
+        + reds
+        + yellows[visible_yellow_cap:]
+        + greens[visible_green_cap:]
+    )
     total_scanned = len(pool)
 
     # Build a max-sized footer first to know exact reserved space
@@ -1389,11 +1421,11 @@ def build_scanner_caption(firstname: str, provider_label: str, games: List[str],
     for g, pct in game_pcts:
         g_esc = html.escape(g)
         if pct >= 80:
-            line = f"🏆 <b>{g_esc}</b> — <b>{pct}%</b>"
-        elif pct >= 65:
-            line = f"✅ {g_esc} — {pct}%"
+            line = f"🟢 <b>{g_esc}</b> — <b>{pct}%</b>"
+        elif pct >= 60:
+            line = f"🟡 {g_esc} — {pct}%"
         else:
-            line = f"⚪ {g_esc} — {pct}%"
+            line = f"🔴 {g_esc} — {pct}%"
         if used + len(line) + 1 > budget:
             break
         chosen.append((g, line, pct))
@@ -1454,8 +1486,36 @@ def build_scanner_text_result(firstname: str, provider_label: str, games: List[s
         f"👤 <b>{html.escape(firstname)}</b>{mid_str}"
     )
 
-    # Pre-generate percentages
-    game_pcts = [(g, random.randint(34, 95)) for g in pool]
+    # Pre-generate percentages with a more realistic spread
+    game_pcts = []
+    for g in pool:
+        roll = random.random()
+        if roll < 0.15:
+            pct = random.randint(80, 95)
+        elif roll < 0.65:
+            pct = random.randint(60, 79)
+        else:
+            pct = random.randint(34, 59)
+        game_pcts.append((g, pct))
+
+    greens = sorted([item for item in game_pcts if item[1] >= 80], key=lambda item: item[1], reverse=True)
+    yellows = sorted([item for item in game_pcts if 60 <= item[1] < 80], key=lambda item: item[1], reverse=True)
+    reds = sorted([item for item in game_pcts if item[1] < 60], key=lambda item: item[1], reverse=True)
+
+    min_reds = 2 if len(pool) >= 10 else (1 if len(pool) >= 5 else 0)
+    while len(reds) < min_reds and yellows:
+        g, _old_pct = yellows.pop()
+        new_pct = random.randint(40, 59)
+        reds.append((g, new_pct))
+    reds.sort(key=lambda item: item[1], reverse=True)
+
+    game_pcts = (
+        greens[:max(2, min(4, max(1, len(pool) // 7)))]
+        + yellows[:max(3, min(6, max(2, len(pool) // 4)))]
+        + reds
+        + yellows[max(3, min(6, max(2, len(pool) // 4))):]
+        + greens[max(2, min(4, max(1, len(pool) // 7))):]
+    )
     total_scanned = len(pool)
 
     # Budget = 4096 (TG_MAX_TEXT)
