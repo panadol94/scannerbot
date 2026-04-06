@@ -2005,6 +2005,22 @@ def save_content_from_reply(reply_msg):
     return mt, mid, txt
 
 
+def merge_command_extra(base_text: str, command_text: str, command_name: str) -> str:
+    """Merge extra lines written under a command message into the replied content."""
+    raw = (command_text or "").replace("\r\n", "\n")
+    if not raw:
+        return base_text or ""
+
+    lines = raw.split("\n")
+    extra_lines = lines[1:] if lines and lines[0].strip().startswith(command_name) else lines
+    extra = "\n".join(extra_lines).strip()
+    if not extra:
+        return base_text or ""
+    if not (base_text or "").strip():
+        return extra
+    return (base_text.rstrip() + "\n\n" + extra).strip()
+
+
 def _message_has_media(msg: dict) -> bool:
     if not msg:
         return False
@@ -4794,6 +4810,7 @@ def telegram_webhook():
                     send_message(token, chat_id, "❌ Reply ke mesej yang kau nak jadikan <b>JoinLock message</b>, kemudian tulis <code>/setjoinmsg</code>", parse_mode="HTML")
                 else:
                     mt, mid, txt = save_content_from_reply(msg["reply_to_message"])
+                    txt = merge_command_extra(txt, text_msg, "/setjoinmsg")
                     with engine.begin() as conn:
                         conn.execute(text("UPDATE bots SET join_message=:t, join_message_media_type=:mt, join_message_media_file_id=:mf WHERE id=:i"), {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
                     send_message(token, chat_id, "✅ join_message updated.", parse_mode="HTML")
@@ -4803,6 +4820,7 @@ def telegram_webhook():
                     send_message(token, chat_id, "❌ Reply ke mesej yang kau nak jadikan <b>Joined message</b>, kemudian tulis <code>/setjoinedmsg</code>", parse_mode="HTML")
                 else:
                     mt, mid, txt = save_content_from_reply(msg["reply_to_message"])
+                    txt = merge_command_extra(txt, text_msg, "/setjoinedmsg")
                     with engine.begin() as conn:
                         conn.execute(text("UPDATE bots SET joined_message=:t, joined_message_media_type=:mt, joined_message_media_file_id=:mf WHERE id=:i"), {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
                     send_message(token, chat_id, "✅ joined_message updated.", parse_mode="HTML")
