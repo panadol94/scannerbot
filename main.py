@@ -2873,10 +2873,6 @@ def settings_how(topic: str) -> str:
             "Lucky Treasure,97.18</code>\n\n"
             "✅ Games auto-linked to provider key\n"
         )
-    return "OK"
-
-
-
     if topic == "setshareamt":
         return (
             "💰 <b>Set RM per Share</b>\n"
@@ -2979,6 +2975,8 @@ def settings_how(topic: str) -> str:
             "<code>/setscanlimitmsg</code>\\n\\n"
             "Tip: boleh letak placeholder biasa macam {firstname}, [balance], [link]."
         )
+
+    return "OK"
 
 def build_settings_text(bot_row: dict, stats: dict, cb_total: int, cb_rows: list, page: int, page_size: int):
     bot_id = str(bot_row["id"])
