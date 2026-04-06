@@ -242,6 +242,8 @@ def init_db():
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS withdrawal_request_media_file_id TEXT;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS manual_approval BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS inplace_callbacks BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS scanner_link_text TEXT;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS scanner_link_url TEXT;
 
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS affiliate_amount NUMERIC;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS min_withdraw_amount NUMERIC;
@@ -939,6 +941,44 @@ def _normalize_url(url: str) -> str:
     return u
 
 
+def parse_scanner_link_input(raw: str) -> Tuple[str, str]:
+    """Parse scanner CTA input from either `Label | URL` or 2-line format."""
+    text_ = (raw or "").strip()
+    if not text_:
+        return "", ""
+
+    lines = [ln.strip() for ln in text_.splitlines() if ln.strip()]
+    joined = "\n".join(lines)
+
+    label = ""
+    url = ""
+    if "|" in joined:
+        label, url = [p.strip() for p in joined.split("|", 1)]
+    elif len(lines) >= 2:
+        label, url = lines[0], lines[1]
+
+    url = _normalize_url(url)
+    return label[:64].strip(), url
+
+
+def get_scanner_cta(bot_row: Optional[dict]) -> Tuple[str, str]:
+    if not bot_row:
+        return "", ""
+    label = (bot_row.get("scanner_link_text") or "").strip()
+    url = _normalize_url(bot_row.get("scanner_link_url") or "")
+    return label[:64], url
+
+
+def scanner_cta_status(bot_row: Optional[dict]) -> str:
+    label, url = get_scanner_cta(bot_row)
+    if label and url:
+        short_url = html.escape(url)
+        if len(short_url) > 36:
+            short_url = short_url[:33] + "..."
+        return f"✅ {html.escape(label)} → {short_url}"
+    return "🟡 OFF"
+
+
 def _convert_md_links_to_html(text_: str) -> str:
     """
     Convert [label](url) to <a href="url">label</a> for Telegram HTML parse_mode.
@@ -1564,24 +1604,28 @@ def build_scanner_text_result(firstname: str, provider_label: str, games: List[s
     return "\n".join(lines_out)
 
 
-def build_scanner_result_keyboard(provider: str) -> dict:
-    """Inline keyboard untuk result scanner: Scan Kembali + Kembali ke Menu Scanner."""
+def build_scanner_result_keyboard(provider: str, bot_row: Optional[dict] = None) -> dict:
+    """Inline keyboard untuk result scanner: Scan Kembali + Kembali + optional CTA link."""
     provider_clean = norm_provider(provider)
     key = provider_clean or provider
-    return {
-        "inline_keyboard": [[
+    rows = [[
             {"text": "🟢 Scan Kembali", "callback_data": f"cb:scan_{key}"},
             {"text": "⬅️ Kembali", "callback_data": "cb:menuscanner"},
         ]]
-    }
+    cta_text, cta_url = get_scanner_cta(bot_row)
+    if cta_text and cta_url:
+        rows.append([
+            {"text": cta_text, "url": cta_url}
+        ])
+    return {"inline_keyboard": rows}
 
 
-def send_scanner_result(token: str, chat_id: int, firstname: str, provider: str, media: Dict, games: List[str], member_id: str = "", cache_key: tuple = None) -> None:
+def send_scanner_result(token: str, chat_id: int, firstname: str, provider: str, media: Dict, games: List[str], member_id: str = "", cache_key: tuple = None, bot_row: Optional[dict] = None) -> None:
     provider_clean = norm_provider(provider)
     provider_label = provider_clean.upper() if provider_clean else provider
     caption = build_scanner_caption(firstname, provider_label, games, member_id=member_id, cache_key=cache_key)
 
-    kb = build_scanner_result_keyboard(provider)
+    kb = build_scanner_result_keyboard(provider, bot_row=bot_row)
 
     media_type = media.get("media_type")
     file_id = media.get("file_id")
@@ -1796,14 +1840,14 @@ def _coerce_media_dict(media):
         return {"media_type": "photo", "file_id": media.strip()}
     return {}
 
-def send_scanner_result_edit(token: str, chat_id: int, message_id: int, firstname: str, provider: str, media, games: List[str], member_id: str = "", cache_key: tuple = None) -> bool:
+def send_scanner_result_edit(token: str, chat_id: int, message_id: int, firstname: str, provider: str, media, games: List[str], member_id: str = "", cache_key: tuple = None, bot_row: Optional[dict] = None) -> bool:
     """Try to edit current message into scanner result (media+caption). Return True if edited."""
     media = _coerce_media_dict(media)
     provider_clean = norm_provider(provider)
     provider_label = provider_clean.upper() if provider_clean else provider
     caption = build_scanner_caption(firstname, provider_label, games, member_id=member_id, cache_key=cache_key)
 
-    kb = build_scanner_result_keyboard(provider)
+    kb = build_scanner_result_keyboard(provider, bot_row=bot_row)
 
     media_type = (media.get("media_type") or "").strip().lower()
     file_id = (media.get("file_id") or "").strip()
@@ -1855,8 +1899,8 @@ def run_scanner_flow(token: str, chat_id: int, message_id: int, firstname: str, 
     except Exception:
         pass
 
-    if not send_scanner_result_edit(token, chat_id, message_id, firstname, provider, media, games, member_id=member_id, cache_key=cache_key):
-        send_scanner_result(token, chat_id, firstname, provider, _coerce_media_dict(media), games, member_id=member_id, cache_key=cache_key)
+    if not send_scanner_result_edit(token, chat_id, message_id, firstname, provider, media, games, member_id=member_id, cache_key=cache_key, bot_row=bot_row):
+        send_scanner_result(token, chat_id, firstname, provider, _coerce_media_dict(media), games, member_id=member_id, cache_key=cache_key, bot_row=bot_row)
 
 
 def require_admin(bot_row: dict, uid: int) -> bool:
@@ -2713,6 +2757,7 @@ def settings_help_all() -> str:
         
         "🎰 <b>SCANNER</b>\n"
         "• <code>/addscanner provider</code> - Add scanner media (reply)\n"
+        "• <code>/setscannerlink</code> - Set result CTA link (reply text)\n"
         "• <code>/addgames provider</code> - Add games (reply JSON)\n"
         "• <code>/updategames provider</code> - Update existing games\n"
         "• <code>/setscanlimit 20</code> - Set global daily limit\n"
@@ -2866,6 +2911,25 @@ def settings_how(topic: str) -> str:
             "<code>!1callback Mega888 Scanner|mega888</code>\n"
             "User tekan → bot auto keluarkan media + run scanner!\n\n"
             "💡 <b>Note:</b> Provider key must match (e.g., 'jili', 'mega888')\n"
+        )
+    if topic == "scannerlink":
+        return (
+            "🔗 <b>How to Set Scanner CTA Link</b>\n"
+            "━━━━━━━━━━━━━━━━━━\n\n"
+            "CTA ini akan muncul di <b>baris bawah</b> result scanner.\n\n"
+            "📌 <b>Cara set</b>\n"
+            "1) Hantar / reply text macam:\n"
+            "<code>🎮 Play Now | www.example.com</code>\n"
+            "atau 2 baris:\n"
+            "<code>🎮 Play Now\nwww.example.com</code>\n\n"
+            "2) Lepas tu reply text tu dengan:\n"
+            "<code>/setscannerlink</code>\n\n"
+            "✅ Bot auto tukar <code>www...</code> jadi <code>https://...</code>\n"
+            "❌ Buang balik CTA:\n"
+            "<code>/setscannerlink off</code>\n\n"
+            "Layout result:\n"
+            "• Row 1: Scan Kembali | Kembali\n"
+            "• Row 2: Button link CTA\n"
         )
     if topic == "addgames":
         return (
@@ -3023,6 +3087,7 @@ def build_settings_text(bot_row: dict, stats: dict, cb_total: int, cb_rows: list
     scan_duration = get_scanner_duration_seconds(bot_row)
     scan_loading_count = scanner_loading_text_count(scan_duration)
     joined_msg_status = "✅ CUSTOM" if (bot_row.get("joined_message") or bot_row.get("joined_message_media_type")) else "🟡 DEFAULT"
+    scanner_cta_txt = scanner_cta_status(bot_row)
 
     txt = (
         "⚙️ <b>ADMIN CONTROL PANEL</b>\n"
@@ -3042,6 +3107,7 @@ def build_settings_text(bot_row: dict, stats: dict, cb_total: int, cb_rows: list
         f"💵 Share: <b>RM{share_amt:.2f}</b> | 🏧 Min WD: <b>RM{min_wd:.2f}</b>\n"
         f"🎰 Scan Limit: {scan_status}\n"
         f"⏱️ Scan Loading: <b>{scanner_duration_label(scan_duration)}</b> ({scan_loading_count} text × 5s)\n"
+        f"🔗 Scanner CTA: <b>{scanner_cta_txt}</b>\n"
         f"🎉 Joined Msg: <b>{joined_msg_status}</b>\n"
         f"🧩 Callbacks: <b>{cb_total}</b>\n"
         "\n"
@@ -3291,10 +3357,12 @@ def build_settings_keyboard_by_category(bot_row: dict, cat: str, page: int, page
         cur_scan_duration = get_scanner_duration_seconds(bot_row)
         cur_scan_loading_count = scanner_loading_text_count(cur_scan_duration)
         joined_msg_set = bool(bot_row.get("joined_message") or bot_row.get("joined_message_media_type"))
+        scanner_cta_set = bool((bot_row.get("scanner_link_text") or "").strip() and (bot_row.get("scanner_link_url") or "").strip())
         kb["inline_keyboard"].extend([
             [{"text": "🎰 SCANNER MANAGEMENT", "callback_data": "st:noop"}],
             [{"text": "⚙️ Set Global Limit", "callback_data": "st:scan:setglobal"}],
             [{"text": f"⏳ Scanner Loading: {scanner_duration_label(cur_scan_duration)} ({cur_scan_loading_count}×5s)", "callback_data": "st:noop"}],
+            [{"text": ("🔗 Scanner CTA: ON" if scanner_cta_set else "🔗 Scanner CTA: OFF"), "callback_data": "st:noop"}],
             [
                 {"text": ("✅ 15s" if cur_scan_duration == 15 else "15s"), "callback_data": "st:scan:dur:15"},
                 {"text": ("✅ 25s" if cur_scan_duration == 25 else "25s"), "callback_data": "st:scan:dur:25"},
@@ -3310,6 +3378,7 @@ def build_settings_keyboard_by_category(bot_row: dict, cat: str, page: int, page
              {"text": "👁️ Preview Joined Msg", "callback_data": "st:preview:joined"}],
             [{"text": "📖 How: Add Scanner", "callback_data": "st:how:addscanner"},
              {"text": "📖 How: Add Games", "callback_data": "st:how:addgames"}],
+            [{"text": "📖 How: Scanner Link", "callback_data": "st:how:scannerlink"}],
             [{"text": "📖 How: Joined Msg", "callback_data": "st:how:setjoinedmsg"}],
         ])
 
@@ -5124,6 +5193,61 @@ def telegram_webhook():
                 else:
                     cmd_name = "/setstart" if text_msg.startswith("/setstart") else "/setloading"
                     send_message(token, chat_id, f"❌ Sila <b>REPLY</b> kepada content (text/gambar/video) yang nak dijadikan {cmd_name} message.", parse_mode="HTML")
+
+            elif text_msg.startswith("/setscannerlink"):
+                if (not is_owner(uid, bot_row)) and (not is_admin(uid, bot_id)):
+                    tg_send_message(token, chat_id, "❌ Command ini untuk OWNER/ADMIN sahaja.", parse_mode="HTML")
+                    return jsonify({"ok": True})
+
+                parts = text_msg.split(maxsplit=1)
+                arg = parts[1].strip() if len(parts) > 1 else ""
+                arg_low = arg.lower()
+
+                if arg_low in ("off", "delete", "remove", "clear"):
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text("UPDATE bots SET scanner_link_text=NULL, scanner_link_url=NULL WHERE id=:i"),
+                            {"i": bot_id},
+                        )
+                    tg_send_message(token, chat_id, "✅ Scanner CTA dibuang.", parse_mode="HTML")
+                    return jsonify({"ok": True})
+
+                source_text = ""
+                if arg:
+                    source_text = arg
+                elif msg.get("reply_to_message"):
+                    rmsg = msg["reply_to_message"]
+                    source_text = (rmsg.get("text") or rmsg.get("caption") or "").strip()
+
+                label, url = parse_scanner_link_input(source_text)
+                if not label or not url:
+                    tg_send_message(
+                        token,
+                        chat_id,
+                        "❌ Format tak betul.\n\n"
+                        "Contoh 1 line:\n"
+                        "<code>🎮 Play Now | www.example.com</code>\n\n"
+                        "Contoh 2 line:\n"
+                        "<code>🎮 Play Now\nwww.example.com</code>\n\n"
+                        "Set kemudian reply text tu dengan <code>/setscannerlink</code>\n"
+                        "Buang balik: <code>/setscannerlink off</code>",
+                        parse_mode="HTML",
+                    )
+                    return jsonify({"ok": True})
+
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("UPDATE bots SET scanner_link_text=:t, scanner_link_url=:u WHERE id=:i"),
+                        {"t": label, "u": url, "i": bot_id},
+                    )
+
+                tg_send_message(
+                    token,
+                    chat_id,
+                    f"✅ Scanner CTA disimpan.\n\nButton: <b>{html.escape(label)}</b>\nURL: <code>{html.escape(url)}</code>",
+                    parse_mode="HTML",
+                )
+                return jsonify({"ok": True})
 
             elif text_msg.startswith(("/addscanner", "/setscannermedia")):
                 if (not is_owner(uid, bot_row)) and (not is_admin(uid, bot_id)):
