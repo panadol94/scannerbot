@@ -218,6 +218,9 @@ def init_db():
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS join_message TEXT;         -- custom prompt join
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS join_message_media_type TEXT;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS join_message_media_file_id TEXT;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS joined_message TEXT;       -- message after user passes join gate
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS joined_message_media_type TEXT;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS joined_message_media_file_id TEXT;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS contact_message TEXT;      -- custom prompt share contact
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS contact_message_media_type TEXT;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS contact_message_media_file_id TEXT;
@@ -2368,7 +2371,8 @@ def clone_bot_data(source_bot_id: str, target_bot_id: str, chat_id: int = 0) -> 
     CLONE_COLS = [
         "start_text", "start_media_type", "start_media_file_id",
         "loading_text", "loading_media_type", "loading_media_file_id",
-        "join_message",
+        "join_message", "join_message_media_type", "join_message_media_file_id",
+        "joined_message", "joined_message_media_type", "joined_message_media_file_id",
         "contact_message", "pending_message", "verified_message", "rejected_message",
         "group_contact_message", "withdrawal_prompt",
         "manual_approval", "inplace_callbacks",
@@ -2383,6 +2387,8 @@ def clone_bot_data(source_bot_id: str, target_bot_id: str, chat_id: int = 0) -> 
     MEDIA_PAIRS = [
         ("start_media_type", "start_media_file_id"),
         ("loading_media_type", "loading_media_file_id"),
+        ("join_message_media_type", "join_message_media_file_id"),
+        ("joined_message_media_type", "joined_message_media_file_id"),
         ("scan_limit_message_media_type", "scan_limit_message_media_file_id"),
         ("withdrawal_approve_media_type", "withdrawal_approve_media_file_id"),
         ("withdrawal_reject_media_type", "withdrawal_reject_media_file_id"),
@@ -2663,6 +2669,7 @@ def settings_help_all() -> str:
         "• <code>/setlockbot on|off</code> - Lock/unlock bot\n"
         "• <code>/setjoin @ch1,@ch2</code> - Set join targets\n"
         "• <code>/setjoinmsg</code> - Custom join lock message\n"
+        "• <code>/setjoinedmsg</code> - Message after user passes JoinLock\n"
         "• <code>/setadmingroup</code> - Set admin group (in group)\n"
         "• JoinLock, PhoneLock, Manual → via /settings buttons\n\n"
         
@@ -2924,6 +2931,13 @@ def settings_how(topic: str) -> str:
             "Reply content, kemudian tulis:\n"
             "<code>/setcontactmsg</code>\n"
         )
+    if topic == "setjoinedmsg":
+        return (
+            "📝 <b>Set mesej lepas user dah join channel/group</b>\n"
+            "Reply content (text/gambar/video) yang kau nak, kemudian tulis:\n"
+            "<code>/setjoinedmsg</code>\n\n"
+            "Tip: support placeholder macam {firstname}, {username}, {member_id}, [balance], [share], [link] dan button syntax."
+        )
     if topic == "setgroupcontactmsg":
         return (
             "📝 <b>Set mesej minta user share contact (dalam group)</b>\n"
@@ -2994,6 +3008,7 @@ def build_settings_text(bot_row: dict, stats: dict, cb_total: int, cb_rows: list
     scan_status = "♾️ UNLIMITED" if not scan_limit else f"🔢 {int(scan_limit)}/day"
     scan_duration = get_scanner_duration_seconds(bot_row)
     scan_loading_count = scanner_loading_text_count(scan_duration)
+    joined_msg_status = "✅ CUSTOM" if (bot_row.get("joined_message") or bot_row.get("joined_message_media_type")) else "🟡 DEFAULT"
 
     txt = (
         "⚙️ <b>ADMIN CONTROL PANEL</b>\n"
@@ -3013,6 +3028,7 @@ def build_settings_text(bot_row: dict, stats: dict, cb_total: int, cb_rows: list
         f"💵 Share: <b>RM{share_amt:.2f}</b> | 🏧 Min WD: <b>RM{min_wd:.2f}</b>\n"
         f"🎰 Scan Limit: {scan_status}\n"
         f"⏱️ Scan Loading: <b>{scanner_duration_label(scan_duration)}</b> ({scan_loading_count} text × 5s)\n"
+        f"🎉 Joined Msg: <b>{joined_msg_status}</b>\n"
         f"🧩 Callbacks: <b>{cb_total}</b>\n"
         "\n"
         "━━━━━━━━━━━━━━━━━━\n"
@@ -3260,6 +3276,7 @@ def build_settings_keyboard_by_category(bot_row: dict, cat: str, page: int, page
     elif cat == "scanner":
         cur_scan_duration = get_scanner_duration_seconds(bot_row)
         cur_scan_loading_count = scanner_loading_text_count(cur_scan_duration)
+        joined_msg_set = bool(bot_row.get("joined_message") or bot_row.get("joined_message_media_type"))
         kb["inline_keyboard"].extend([
             [{"text": "🎰 SCANNER MANAGEMENT", "callback_data": "st:noop"}],
             [{"text": "⚙️ Set Global Limit", "callback_data": "st:scan:setglobal"}],
@@ -3275,8 +3292,11 @@ def build_settings_keyboard_by_category(bot_row: dict, cat: str, page: int, page
             [{"text": "📊 View Usage", "callback_data": "st:scan:viewusage"},
              {"text": "🔄 Reset Usage", "callback_data": "st:scan:reset"}],
             [{"text": "✏️ Custom Limit Msg", "callback_data": "st:scan:editmsg"}],
+            [{"text": ("✏️ Edit Joined Msg ✅" if joined_msg_set else "✏️ Edit Joined Msg"), "callback_data": "st:scan:editjoined"},
+             {"text": "👁️ Preview Joined Msg", "callback_data": "st:preview:joined"}],
             [{"text": "📖 How: Add Scanner", "callback_data": "st:how:addscanner"},
              {"text": "📖 How: Add Games", "callback_data": "st:how:addgames"}],
+            [{"text": "📖 How: Joined Msg", "callback_data": "st:how:setjoinedmsg"}],
         ])
 
     elif cat == "withdraw":
@@ -3414,6 +3434,56 @@ def preview_loading(bot_row: dict, chat_id: int, uid: int):
         send_media(token, chat_id, mt, mid, caption="📌 <b>PREVIEW LOADING</b>\n\n" + final_text, reply_markup=markup)
     else:
         send_message(token, chat_id, "📌 <b>PREVIEW LOADING</b>\n\n" + final_text, reply_markup=markup)
+
+
+def preview_joined(bot_row: dict, chat_id: int, uid: int):
+    """Preview JOINED message after user passes JoinLock."""
+    bot_id = str(bot_row["id"])
+    token = bot_row["token"]
+    user_row = get_user_row(bot_id, uid) or {
+        "user_id": uid,
+        "first_name": "Preview",
+        "username": None,
+        "balance": 0,
+        "shared_count": 0,
+        "member_id": "000000",
+    }
+
+    joined_text = bot_row.get("joined_message") or "✅ Akses dah dibuka. Sila tekan /start"
+    final_text = render_placeholders(joined_text, bot_row.get("bot_username") or "", user_row)
+    share_q = make_share_query(bot_row.get("bot_username") or "", user_row)
+    final_text, markup = parse_buttons(final_text, share_inline_query=share_q)
+
+    mt, mid = bot_row.get("joined_message_media_type"), bot_row.get("joined_message_media_file_id")
+    if mt and mid:
+        send_media(token, chat_id, mt, mid, caption="📌 <b>PREVIEW JOINED MESSAGE</b>\n\n" + final_text, reply_markup=markup)
+    else:
+        send_message(token, chat_id, "📌 <b>PREVIEW JOINED MESSAGE</b>\n\n" + final_text, reply_markup=markup)
+
+
+def send_joined_message(bot_row: dict, chat_id: int, user_row: Optional[dict] = None) -> None:
+    """Send message after user successfully passes JoinLock."""
+    token = bot_row["token"]
+    uid = int((user_row or {}).get("user_id") or 0)
+    joined_user = user_row or {
+        "user_id": uid,
+        "first_name": "Boss",
+        "username": None,
+        "balance": 0,
+        "shared_count": 0,
+        "member_id": "000000",
+    }
+
+    joined_text = bot_row.get("joined_message") or "✅ Akses dah dibuka. Sila tekan /start"
+    final_text = render_placeholders(joined_text, bot_row.get("bot_username") or "", joined_user)
+    share_q = make_share_query(bot_row.get("bot_username") or "", joined_user)
+    final_text, markup = parse_buttons(final_text, share_inline_query=share_q)
+
+    mt, mid = bot_row.get("joined_message_media_type"), bot_row.get("joined_message_media_file_id")
+    if mt and mid:
+        send_media(token, chat_id, mt, mid, caption=final_text, reply_markup=markup)
+    else:
+        send_message(token, chat_id, final_text, reply_markup=markup, parse_mode="HTML")
 
 
 def edit_loading_message(bot_row: dict, chat_id: int, message_id: int, user_row: dict):
@@ -4651,6 +4721,16 @@ def telegram_webhook():
                     del pending_inputs[(bot_id, uid)]
                     send_message(token, chat_id, "✅ JoinLock message updated!", parse_mode="HTML")
                     return "OK", 200
+
+                elif action == "joinedmsg":
+                    rep = msg
+                    mt, mid, txt = save_content_from_reply(rep)
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET joined_message=:t, joined_message_media_type=:mt, joined_message_media_file_id=:mf WHERE id=:i"),
+                                   {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
+                    del pending_inputs[(bot_id, uid)]
+                    send_message(token, chat_id, "✅ Joined message updated!", parse_mode="HTML")
+                    return "OK", 200
                 
                 elif action == "contactmsg":
                     rep = msg
@@ -4719,6 +4799,15 @@ def telegram_webhook():
                     with engine.begin() as conn:
                         conn.execute(text("UPDATE bots SET join_message=:t, join_message_media_type=:mt, join_message_media_file_id=:mf WHERE id=:i"), {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
                     send_message(token, chat_id, "✅ join_message updated.", parse_mode="HTML")
+
+            elif text_msg.startswith("/setjoinedmsg"):
+                if not msg.get("reply_to_message"):
+                    send_message(token, chat_id, "❌ Reply ke mesej yang kau nak jadikan <b>Joined message</b>, kemudian tulis <code>/setjoinedmsg</code>", parse_mode="HTML")
+                else:
+                    mt, mid, txt = save_content_from_reply(msg["reply_to_message"])
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET joined_message=:t, joined_message_media_type=:mt, joined_message_media_file_id=:mf WHERE id=:i"), {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
+                    send_message(token, chat_id, "✅ joined_message updated.", parse_mode="HTML")
 
             # JOINLOCK set list
             elif text_msg.startswith("/setjoin"):
@@ -5410,7 +5499,7 @@ def telegram_webhook():
             answer_callback(token, cq["id"], "Checking…", show_alert=False)
             bot_row2 = get_bot_by_id(bot_id) or bot_row
             if ensure_access(bot_row2, chat_id, uid, user_row):
-                send_message(token, chat_id, "✅ Akses dah dibuka. Sila tekan /start", parse_mode="HTML")
+                send_joined_message(bot_row2, chat_id, user_row)
             return "OK", 200
 
         # Admin approve buttons (manual approval)
@@ -6201,6 +6290,18 @@ def telegram_webhook():
                     answer_callback(token, cq["id"])
                     return "OK", 200
 
+                elif sub == "editjoined":
+                    pending_inputs[(bot_id, uid)] = ("joinedmsg", time.time())
+                    msg = (
+                        "✏️ <b>Edit Joined Message</b>\n\n"
+                        "Reply to this message with your message after user passes JoinLock.\n"
+                        "You can send text or media (photo/video/gif).\n\n"
+                        "Support placeholder macam {firstname}, {username}, {member_id}, [balance], [share], [link]."
+                    )
+                    send_message(token, chat_id, msg, parse_mode="HTML")
+                    answer_callback(token, cq["id"])
+                    return "OK", 200
+
             if action == "withdrawal":
                 sub = parts[2] if len(parts) > 2 else ""
                 if sub == "editrequest":
@@ -6268,6 +6369,8 @@ def telegram_webhook():
                     preview_start(bot_row, chat_id, uid)
                 elif which == "loading":
                     preview_loading(bot_row, chat_id, uid)
+                elif which == "joined":
+                    preview_joined(bot_row, chat_id, uid)
                 answer_callback(token, cq["id"])
                 return "OK", 200
 
