@@ -295,6 +295,7 @@ def init_db():
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS scan_limit_message_media_type TEXT;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS scan_limit_message_media_file_id TEXT;
     ALTER TABLE bots ADD COLUMN IF NOT EXISTS scanner_duration_seconds INT NOT NULL DEFAULT 25;
+    ALTER TABLE bots ADD COLUMN IF NOT EXISTS scanner_keyboard_mode TEXT DEFAULT 'off';
 
     CREATE TABLE IF NOT EXISTS scan_daily_usage (
       bot_id UUID NOT NULL,
@@ -1775,6 +1776,231 @@ SCAN_BM_FRAMES = [
 SCAN_DURATION_PRESETS = (15, 25, 40, 60)
 DEFAULT_SCANNER_DURATION_SECONDS = 25
 SCANNER_LOADING_TEXT_DELAY_SECONDS = 5
+SCANNER_KEYBOARD_MODES = ("off", "main", "full")
+SCANNER_KEYBOARD_LABELS = {
+    "off": "OFF",
+    "main": "MAIN",
+    "full": "FULL",
+}
+SCANNER_MAIN_MENU_TEXT = "🏠 Menu Utama"
+SCANNER_SCAN_TEXT = "🎰 Scanner"
+SCANNER_GAME_LIST_TEXT = "📋 Game List"
+SCANNER_HELP_TEXT = "ℹ️ Help"
+SCANNER_WITHDRAW_TEXT = "💰 Withdraw"
+
+
+def get_scanner_keyboard_mode(bot_row: Optional[dict]) -> str:
+    raw = str((bot_row or {}).get("scanner_keyboard_mode") or "off").strip().lower()
+    return raw if raw in SCANNER_KEYBOARD_MODES else "off"
+
+
+def scanner_keyboard_mode_label(mode: str) -> str:
+    return SCANNER_KEYBOARD_LABELS.get(get_scanner_keyboard_mode({"scanner_keyboard_mode": mode}), "OFF")
+
+
+def build_scanner_reply_keyboard(mode: str) -> Optional[dict]:
+    mode = get_scanner_keyboard_mode({"scanner_keyboard_mode": mode})
+    if mode == "off":
+        return None
+
+    rows = [
+        [
+            {"text": SCANNER_MAIN_MENU_TEXT},
+            {"text": SCANNER_SCAN_TEXT},
+            {"text": SCANNER_GAME_LIST_TEXT},
+        ]
+    ]
+    if mode == "full":
+        rows.append([
+            {"text": SCANNER_HELP_TEXT},
+            {"text": SCANNER_WITHDRAW_TEXT},
+        ])
+
+    return {
+        "keyboard": rows,
+        "resize_keyboard": True,
+        "is_persistent": True,
+    }
+
+
+def maybe_send_scanner_reply_keyboard(token: str, chat_id: int, bot_row: Optional[dict], inline_markup: Optional[dict] = None) -> Optional[dict]:
+    """Return reply keyboard when safe to attach directly. If inline markup exists, send keyboard as follow-up."""
+    kb = build_scanner_reply_keyboard(get_scanner_keyboard_mode(bot_row))
+    if not kb:
+        return None
+    if inline_markup:
+        send_message(token, chat_id, "⬇️ Pilih menu dekat keyboard bawah.", reply_markup=kb, parse_mode="HTML")
+        return None
+    return kb
+
+
+def get_scanner_providers(conn: sa.engine.Connection, bot_id: str) -> List[str]:
+    rows = conn.execute(
+        text(
+            """
+            SELECT provider FROM scanner_media WHERE bot_id=:b
+            UNION
+            SELECT provider FROM scanner_games WHERE bot_id=:b
+            ORDER BY provider
+            """
+        ),
+        {"b": bot_id},
+    ).mappings().all()
+    out: List[str] = []
+    for r in rows:
+        p = norm_provider((r or {}).get("provider") or "")
+        if p:
+            out.append(p)
+    return out
+
+
+def _chunk_buttons(items: List[dict], size: int = 2) -> List[List[dict]]:
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+def build_scanner_provider_menu(bot_id: str, mode: str = "scan") -> Optional[dict]:
+    with engine.connect() as conn:
+        providers = get_scanner_providers(conn, bot_id)
+
+    if not providers:
+        return None
+
+    buttons = []
+    for provider in providers:
+        label = provider.upper()
+        if mode == "list":
+            cb = f"menu:list:{provider}:1"
+        else:
+            cb = f"cb:{provider}"
+        buttons.append({"text": label, "callback_data": cb})
+
+    rows = _chunk_buttons(buttons, size=2)
+    if mode == "list":
+        rows.append([{"text": "⬅️ Back", "callback_data": "menu:listroot"}])
+    return {"inline_keyboard": rows}
+
+
+def send_scanner_provider_menu(token: str, chat_id: int, bot_id: str, mode: str = "scan") -> None:
+    kb = build_scanner_provider_menu(bot_id, mode=mode)
+    if not kb:
+        send_message(token, chat_id, "⚠️ Belum ada provider scanner disetup lagi.", parse_mode="HTML")
+        return
+
+    title = "🎰 <b>Pilih provider untuk scan</b>" if mode == "scan" else "📋 <b>Pilih provider untuk lihat game list</b>"
+    send_message(token, chat_id, title, reply_markup=kb, parse_mode="HTML")
+
+
+def send_scanner_games_list(token: str, chat_id: int, bot_id: str, provider: str, page: int = 1, message_id: Optional[int] = None) -> None:
+    provider = norm_provider(provider)
+    with engine.connect() as conn:
+        games = get_scanner_games(conn, bot_id, provider)
+
+    if not games:
+        text_ = f"📋 <b>{html.escape(provider.upper())}</b>\n\n<i>Belum ada game list untuk provider ni.</i>"
+        kb = {"inline_keyboard": [[{"text": "⬅️ Back", "callback_data": "menu:listroot"}]]}
+        if message_id:
+            try:
+                edit_message(token, chat_id, message_id, text_, reply_markup=kb, parse_mode="HTML")
+                return
+            except Exception:
+                pass
+        send_message(token, chat_id, text_, reply_markup=kb, parse_mode="HTML")
+        return
+
+    per_page = 20
+    total = len(games)
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = max(1, min(int(page or 1), pages))
+    start = (page - 1) * per_page
+    chunk = games[start:start + per_page]
+    lines = [f"{start + i + 1}. {html.escape(g)}" for i, g in enumerate(chunk)]
+    text_ = (
+        f"📋 <b>{html.escape(provider.upper())} Game List</b>\n"
+        f"<i>Page {page}/{pages} • {total} games</i>\n\n"
+        + "\n".join(lines)
+    )
+
+    nav_row: List[dict] = []
+    if page > 1:
+        nav_row.append({"text": "⬅️ Prev", "callback_data": f"menu:list:{provider}:{page - 1}"})
+    if page < pages:
+        nav_row.append({"text": "Next ➡️", "callback_data": f"menu:list:{provider}:{page + 1}"})
+
+    kb_rows: List[List[dict]] = []
+    if nav_row:
+        kb_rows.append(nav_row)
+    kb_rows.append([{"text": "⬅️ Back", "callback_data": "menu:listroot"}])
+    kb = {"inline_keyboard": kb_rows}
+
+    if message_id:
+        try:
+            edit_message(token, chat_id, message_id, text_, reply_markup=kb, parse_mode="HTML")
+            return
+        except Exception:
+            pass
+    send_message(token, chat_id, text_, reply_markup=kb, parse_mode="HTML")
+
+
+def preview_scanner_keyboard(bot_row: dict, chat_id: int) -> None:
+    token = bot_row["token"]
+    mode = get_scanner_keyboard_mode(bot_row)
+    kb = build_scanner_reply_keyboard(mode)
+    if not kb:
+        send_message(token, chat_id, "⌨️ <b>Keyboard Preview</b>\n\nMode sekarang: <b>OFF</b>", reply_markup={"remove_keyboard": True}, parse_mode="HTML")
+        return
+    send_message(
+        token,
+        chat_id,
+        f"⌨️ <b>Keyboard Preview</b>\n\nMode sekarang: <b>{scanner_keyboard_mode_label(mode)}</b>",
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+
+
+def handle_scanner_keyboard_text(bot_row: dict, chat_id: int, user: dict, text_msg: str) -> bool:
+    raw = (text_msg or "").strip()
+    if not raw:
+        return False
+
+    token = bot_row["token"]
+    bot_id = str(bot_row["id"])
+    normalized = raw.lower()
+    normalized = re.sub(r"^[^\w]+", "", normalized).strip()
+
+    if normalized in ("menu utama", "main menu"):
+        handle_start(bot_row, chat_id, user, "/start")
+        return True
+
+    uid = int((user or {}).get("id") or 0)
+    user_row = get_user_row(bot_id, uid) or {"user_id": uid}
+    if not ensure_access(bot_row, chat_id, uid, user_row):
+        return True
+
+    if normalized == "scanner":
+        send_scanner_provider_menu(token, chat_id, bot_id, mode="scan")
+        return True
+
+    if normalized in ("game list", "gamelist"):
+        send_scanner_provider_menu(token, chat_id, bot_id, mode="list")
+        return True
+
+    if normalized == "help":
+        send_message(
+            token,
+            chat_id,
+            "ℹ️ <b>Menu Bantuan</b>\n\n"
+            f"• Tekan <b>{html.escape(SCANNER_SCAN_TEXT)}</b> untuk pilih provider dan scan\n"
+            f"• Tekan <b>{html.escape(SCANNER_GAME_LIST_TEXT)}</b> untuk tengok senarai game ikut provider\n"
+            f"• Tekan <b>{html.escape(SCANNER_MAIN_MENU_TEXT)}</b> untuk refresh mesej /start",
+            parse_mode="HTML",
+        )
+        return True
+
+    if normalized == "withdraw":
+        handle_withdraw_request(bot_row, chat_id, user)
+        return True
+
+    return False
 
 
 def get_scanner_duration_seconds(bot_row: Optional[dict]) -> int:
@@ -2439,7 +2665,7 @@ def clone_bot_data(source_bot_id: str, target_bot_id: str, chat_id: int = 0) -> 
         "affiliate_amount", "min_withdraw_amount",
         "scan_limit_per_day", "scan_limit_message",
         "scan_limit_message_media_type", "scan_limit_message_media_file_id",
-        "scanner_duration_seconds",
+        "scanner_duration_seconds", "scanner_keyboard_mode",
         "withdrawal_approve_message", "withdrawal_approve_media_type", "withdrawal_approve_media_file_id",
         "withdrawal_reject_message", "withdrawal_reject_media_type", "withdrawal_reject_media_file_id",
     ]
@@ -3086,6 +3312,7 @@ def build_settings_text(bot_row: dict, stats: dict, cb_total: int, cb_rows: list
     scan_status = "♾️ UNLIMITED" if not scan_limit else f"🔢 {int(scan_limit)}/day"
     scan_duration = get_scanner_duration_seconds(bot_row)
     scan_loading_count = scanner_loading_text_count(scan_duration)
+    scanner_keyboard = scanner_keyboard_mode_label(get_scanner_keyboard_mode(bot_row))
     joined_msg_status = "✅ CUSTOM" if (bot_row.get("joined_message") or bot_row.get("joined_message_media_type")) else "🟡 DEFAULT"
     scanner_cta_txt = scanner_cta_status(bot_row)
 
@@ -3107,6 +3334,7 @@ def build_settings_text(bot_row: dict, stats: dict, cb_total: int, cb_rows: list
         f"💵 Share: <b>RM{share_amt:.2f}</b> | 🏧 Min WD: <b>RM{min_wd:.2f}</b>\n"
         f"🎰 Scan Limit: {scan_status}\n"
         f"⏱️ Scan Loading: <b>{scanner_duration_label(scan_duration)}</b> ({scan_loading_count} text × 5s)\n"
+        f"⌨️ Keyboard Menu: <b>{scanner_keyboard}</b>\n"
         f"🔗 Scanner CTA: <b>{scanner_cta_txt}</b>\n"
         f"🎉 Joined Msg: <b>{joined_msg_status}</b>\n"
         f"🧩 Callbacks: <b>{cb_total}</b>\n"
@@ -3356,12 +3584,14 @@ def build_settings_keyboard_by_category(bot_row: dict, cat: str, page: int, page
     elif cat == "scanner":
         cur_scan_duration = get_scanner_duration_seconds(bot_row)
         cur_scan_loading_count = scanner_loading_text_count(cur_scan_duration)
+        cur_keyboard_mode = get_scanner_keyboard_mode(bot_row)
         joined_msg_set = bool(bot_row.get("joined_message") or bot_row.get("joined_message_media_type"))
         scanner_cta_set = bool((bot_row.get("scanner_link_text") or "").strip() and (bot_row.get("scanner_link_url") or "").strip())
         kb["inline_keyboard"].extend([
             [{"text": "🎰 SCANNER MANAGEMENT", "callback_data": "st:noop"}],
             [{"text": "⚙️ Set Global Limit", "callback_data": "st:scan:setglobal"}],
             [{"text": f"⏳ Scanner Loading: {scanner_duration_label(cur_scan_duration)} ({cur_scan_loading_count}×5s)", "callback_data": "st:noop"}],
+            [{"text": f"⌨️ Keyboard Menu: {scanner_keyboard_mode_label(cur_keyboard_mode)}", "callback_data": "st:noop"}],
             [{"text": ("🔗 Scanner CTA: ON" if scanner_cta_set else "🔗 Scanner CTA: OFF"), "callback_data": "st:noop"}],
             [
                 {"text": ("✅ 15s" if cur_scan_duration == 15 else "15s"), "callback_data": "st:scan:dur:15"},
@@ -3373,6 +3603,12 @@ def build_settings_keyboard_by_category(bot_row: dict, cat: str, page: int, page
             ],
             [{"text": "📊 View Usage", "callback_data": "st:scan:viewusage"},
              {"text": "🔄 Reset Usage", "callback_data": "st:scan:reset"}],
+            [
+                {"text": ("✅ OFF" if cur_keyboard_mode == "off" else "OFF"), "callback_data": "st:scan:kbd:off"},
+                {"text": ("✅ MAIN" if cur_keyboard_mode == "main" else "MAIN"), "callback_data": "st:scan:kbd:main"},
+                {"text": ("✅ FULL" if cur_keyboard_mode == "full" else "FULL"), "callback_data": "st:scan:kbd:full"},
+            ],
+            [{"text": "👁️ Preview Keyboard", "callback_data": "st:preview:keyboard"}],
             [{"text": "✏️ Custom Limit Msg", "callback_data": "st:scan:editmsg"}],
             [{"text": ("✏️ Edit Joined Msg ✅" if joined_msg_set else "✏️ Edit Joined Msg"), "callback_data": "st:scan:editjoined"},
              {"text": "👁️ Preview Joined Msg", "callback_data": "st:preview:joined"}],
@@ -3560,7 +3796,9 @@ def send_joined_message(bot_row: dict, chat_id: int, user_row: Optional[dict] = 
     joined_text = bot_row.get("joined_message") or "✅ Akses dah dibuka. Sila tekan /start"
     final_text = render_placeholders(joined_text, bot_row.get("bot_username") or "", joined_user)
     share_q = make_share_query(bot_row.get("bot_username") or "", joined_user)
-    final_text, markup = parse_buttons(final_text, share_inline_query=share_q)
+    final_text, inline_markup = parse_buttons(final_text, share_inline_query=share_q)
+    reply_kb = maybe_send_scanner_reply_keyboard(token, chat_id, bot_row, inline_markup=inline_markup)
+    markup = inline_markup or reply_kb
 
     mt, mid = bot_row.get("joined_message_media_type"), bot_row.get("joined_message_media_file_id")
     if mt and mid:
@@ -3887,7 +4125,9 @@ def handle_start(bot_row, chat_id, user, text_msg):
     start_text = bot_row.get("start_text") or bot_row.get("start_message") or "Selamat datang {firstname}!"
     final_text = render_placeholders(start_text, bot_row.get("bot_username") or "", user_row)
     share_q = make_share_query(bot_row.get("bot_username") or "", user_row)
-    final_text, markup = parse_buttons(final_text, share_inline_query=share_q)
+    final_text, inline_markup = parse_buttons(final_text, share_inline_query=share_q)
+    reply_kb = maybe_send_scanner_reply_keyboard(token, chat_id, bot_row, inline_markup=inline_markup)
+    markup = inline_markup or reply_kb
 
     mt, mid = bot_row.get("start_media_type"), bot_row.get("start_media_file_id")
     if mt and mid:
@@ -4485,6 +4725,10 @@ def telegram_webhook():
                     clear_user_state(bot_id, uid)
                     return "OK", 200
                 handle_addbot_receive_token(bot_row, chat_id, uid, text_msg)
+                return "OK", 200
+
+        if text_msg and not text_msg.startswith("/"):
+            if handle_scanner_keyboard_text(bot_row, chat_id, from_user, text_msg):
                 return "OK", 200
 
         # commands
@@ -6203,6 +6447,33 @@ def telegram_webhook():
             answer_callback(token, cq["id"])
             return "OK", 200
 
+        elif data.startswith("menu:"):
+            parts = data.split(":")
+            sub = parts[1] if len(parts) > 1 else ""
+
+            if sub == "listroot":
+                kb = build_scanner_provider_menu(bot_id, mode="list")
+                if not kb:
+                    answer_callback(token, cq["id"], "Belum ada provider", show_alert=True)
+                    return "OK", 200
+                txt = "📋 <b>Pilih provider untuk lihat game list</b>"
+                try:
+                    edit_message(token, chat_id, message_id, txt, reply_markup=kb, parse_mode="HTML")
+                except Exception:
+                    send_message(token, chat_id, txt, reply_markup=kb, parse_mode="HTML")
+                answer_callback(token, cq["id"])
+                return "OK", 200
+
+            if sub == "list":
+                provider = parts[2] if len(parts) > 2 else ""
+                try:
+                    page = int(parts[3]) if len(parts) > 3 else 1
+                except Exception:
+                    page = 1
+                send_scanner_games_list(token, chat_id, bot_id, provider, page=page, message_id=message_id)
+                answer_callback(token, cq["id"])
+                return "OK", 200
+
         # SETTINGS UI
         elif data.startswith("st:"):
             if data == "st:noop":
@@ -6360,6 +6631,20 @@ def telegram_webhook():
                     bot_row2 = get_bot_by_id(bot_id) or bot_row
                     send_or_edit_settings_panel(bot_row2, chat_id, uid, page=1, edit_ctx={"message_id": message_id}, cat="scanner")
                     return "OK", 200
+
+                if sub == "kbd":
+                    mode = (parts[3] if len(parts) > 3 else "").lower().strip()
+                    if mode not in SCANNER_KEYBOARD_MODES:
+                        answer_callback(token, cq["id"], "Mode tak valid", show_alert=True)
+                        return "OK", 200
+
+                    with engine.begin() as conn:
+                        conn.execute(text("UPDATE bots SET scanner_keyboard_mode=:m WHERE id=:i"), {"m": mode, "i": bot_id})
+
+                    answer_callback(token, cq["id"], f"Keyboard menu: {scanner_keyboard_mode_label(mode)}")
+                    bot_row2 = get_bot_by_id(bot_id) or bot_row
+                    send_or_edit_settings_panel(bot_row2, chat_id, uid, page=1, edit_ctx={"message_id": message_id}, cat="scanner")
+                    return "OK", 200
                 
                 if sub == "setglobal":
                     bot_row2 = get_bot_by_id(bot_id) or bot_row
@@ -6511,6 +6796,8 @@ def telegram_webhook():
                     preview_loading(bot_row, chat_id, uid)
                 elif which == "joined":
                     preview_joined(bot_row, chat_id, uid)
+                elif which == "keyboard":
+                    preview_scanner_keyboard(get_bot_by_id(bot_id) or bot_row, chat_id)
                 answer_callback(token, cq["id"])
                 return "OK", 200
 
