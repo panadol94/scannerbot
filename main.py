@@ -1784,9 +1784,6 @@ SCANNER_KEYBOARD_LABELS = {
 }
 SCANNER_MAIN_MENU_TEXT = "🏠 Menu Utama"
 SCANNER_SCAN_TEXT = "🎰 Scanner"
-SCANNER_GAME_LIST_TEXT = "📋 Game List"
-SCANNER_HELP_TEXT = "ℹ️ Help"
-SCANNER_WITHDRAW_TEXT = "💰 Withdraw"
 
 
 def get_scanner_keyboard_mode(bot_row: Optional[dict]) -> str:
@@ -1807,14 +1804,8 @@ def build_scanner_reply_keyboard(mode: str) -> Optional[dict]:
         [
             {"text": SCANNER_MAIN_MENU_TEXT},
             {"text": SCANNER_SCAN_TEXT},
-            {"text": SCANNER_GAME_LIST_TEXT},
         ]
     ]
-    if mode == "full":
-        rows.append([
-            {"text": SCANNER_HELP_TEXT},
-            {"text": SCANNER_WITHDRAW_TEXT},
-        ])
 
     return {
         "keyboard": rows,
@@ -1978,26 +1969,6 @@ def handle_scanner_keyboard_text(bot_row: dict, chat_id: int, user: dict, text_m
 
     if normalized == "scanner":
         send_scanner_provider_menu(token, chat_id, bot_id, mode="scan")
-        return True
-
-    if normalized in ("game list", "gamelist"):
-        send_scanner_provider_menu(token, chat_id, bot_id, mode="list")
-        return True
-
-    if normalized == "help":
-        send_message(
-            token,
-            chat_id,
-            "ℹ️ <b>Menu Bantuan</b>\n\n"
-            f"• Tekan <b>{html.escape(SCANNER_SCAN_TEXT)}</b> untuk pilih provider dan scan\n"
-            f"• Tekan <b>{html.escape(SCANNER_GAME_LIST_TEXT)}</b> untuk tengok senarai game ikut provider\n"
-            f"• Tekan <b>{html.escape(SCANNER_MAIN_MENU_TEXT)}</b> untuk refresh mesej /start",
-            parse_mode="HTML",
-        )
-        return True
-
-    if normalized == "withdraw":
-        handle_withdraw_request(bot_row, chat_id, user)
         return True
 
     return False
