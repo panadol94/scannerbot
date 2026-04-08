@@ -1948,6 +1948,38 @@ def preview_scanner_keyboard(bot_row: dict, chat_id: int) -> None:
     )
 
 
+def send_action_key_message(bot_row: dict, chat_id: int, user: dict, key: str) -> bool:
+    bot_id = str(bot_row["id"])
+    token = bot_row["token"]
+    uid = int((user or {}).get("id") or 0)
+    act = actions_get(bot_id, key)
+    if not act:
+        return False
+
+    if int(act.get("delay_seconds") or 0) > 0:
+        time.sleep(int(act["delay_seconds"]))
+
+    urow = get_user_row(bot_id, uid) or {
+        "user_id": uid,
+        "first_name": (user or {}).get("first_name"),
+        "username": (user or {}).get("username"),
+    }
+    if not ensure_access(bot_row, chat_id, uid, urow):
+        return True
+
+    txt = render_placeholders(act.get("text") or "", bot_row.get("bot_username") or "", urow)
+    with engine.connect() as _c:
+        txt = apply_scan_placeholders(_c, txt, bot_row, bot_id, int((urow or {}).get("user_id") or uid))
+    share_q = make_share_query(bot_row.get("bot_username") or "", urow)
+    txt, markup = parse_buttons(txt, share_inline_query=share_q)
+
+    if act["type"] != "text" and act.get("media_file_id"):
+        send_media(token, chat_id, act["type"], act["media_file_id"], caption=txt, reply_markup=markup)
+    else:
+        send_message(token, chat_id, txt, reply_markup=markup)
+    return True
+
+
 def handle_scanner_keyboard_text(bot_row: dict, chat_id: int, user: dict, text_msg: str) -> bool:
     raw = (text_msg or "").strip()
     if not raw:
@@ -1968,6 +2000,8 @@ def handle_scanner_keyboard_text(bot_row: dict, chat_id: int, user: dict, text_m
         return True
 
     if normalized == "scanner":
+        if send_action_key_message(bot_row, chat_id, user, "menuscanner"):
+            return True
         send_scanner_provider_menu(token, chat_id, bot_id, mode="scan")
         return True
 
