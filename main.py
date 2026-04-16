@@ -2187,7 +2187,7 @@ def get_user_row(bot_id: str, uid: int):
         ).mappings().first()
 
 
-def upsert_user(bot_id: str, user: dict, upline_id: Optional[int], affiliate_amount: Optional[float] = None):
+def upsert_user(bot_id: str, user: dict, upline_id: Optional[int], affiliate_amount: Optional[float] = None, lock_bot: bool = False):
     uid = int(user["id"])
     if upline_id == uid:
         upline_id = None
@@ -2219,7 +2219,8 @@ def upsert_user(bot_id: str, user: dict, upline_id: Optional[int], affiliate_amo
                 WHERE bot_id=:b AND user_id=:u AND (member_id IS NULL OR member_id='')
             """), {"m": new_mid, "b": bot_id, "u": uid})
 
-        if is_new and upline_id:
+        # When phone lock is active, defer referral credit until contact is verified
+        if is_new and upline_id and not lock_bot:
             upd = conn.execute(text("""
                 UPDATE users
                 SET balance=balance+:a, shared_count=shared_count+1
@@ -2237,6 +2238,35 @@ def upsert_user(bot_id: str, user: dict, upline_id: Optional[int], affiliate_amo
         ).mappings().first()
 
     return row, is_new
+
+
+def credit_upline_if_pending(bot_row: dict, uid: int) -> bool:
+    bot_id = str(bot_row["id"])
+    amount = float(get_bot_affiliate_amount(bot_row))
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT upline_user_id, credited_upline FROM users WHERE bot_id=:b AND user_id=:u"),
+            {"b": bot_id, "u": int(uid)},
+        ).mappings().first()
+        if not row:
+            return False
+        if row.get("credited_upline"):
+            return False
+        upline_id = row.get("upline_user_id")
+        if not upline_id:
+            return False
+        upd = conn.execute(text("""
+            UPDATE users
+            SET balance=balance+:a, shared_count=shared_count+1
+            WHERE bot_id=:b AND user_id=:up
+        """), {"a": amount, "b": bot_id, "up": int(upline_id)})
+        if upd.rowcount != 1:
+            return False
+        conn.execute(
+            text("UPDATE users SET credited_upline=TRUE WHERE bot_id=:b AND user_id=:u"),
+            {"b": bot_id, "u": int(uid)},
+        )
+        return True
 
 
 def set_user_state(bot_id, uid, state, payload=None):
@@ -4122,10 +4152,17 @@ def handle_start(bot_row, chat_id, user, text_msg):
     parts = (text_msg or "").split()
     upline = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else None
 
-    user_row, _ = upsert_user(bot_id, user, upline)
+    user_row, _ = upsert_user(bot_id, user, upline, lock_bot=bool(bot_row.get("lock_bot")))
 
     if not ensure_access(bot_row, chat_id, int(user.get("id")), user_row):
         return
+
+    # Credit upline for users whose referral was deferred by phone lock
+    try:
+        if credit_upline_if_pending(bot_row, int(user.get("id"))):
+            user_row = get_user_row(bot_id, int(user.get("id"))) or user_row
+    except Exception:
+        pass
 
     start_text = bot_row.get("start_text") or bot_row.get("start_message") or "Selamat datang {firstname}!"
     final_text = render_placeholders(start_text, bot_row.get("bot_username") or "", user_row)
@@ -4193,6 +4230,12 @@ def handle_contact(bot_row, msg):
     except IntegrityError:
         send_message(token, chat_id, "❌ Nombor dah guna.", reply_markup={"remove_keyboard": True})
         return
+
+    # Credit referrer only after contact verification succeeds
+    try:
+        credit_upline_if_pending(bot_row, int(uid))
+    except Exception:
+        pass
 
     if bot_row.get("manual_approval"):
         with engine.begin() as conn:
