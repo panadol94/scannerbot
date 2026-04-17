@@ -4611,6 +4611,24 @@ def handle_withdraw_request(bot_row, chat_id, user):
         send_message(bot_row["token"], chat_id, prompt, parse_mode="HTML")
 
 
+def parse_withdraw_request_amount(text_msg: str) -> Optional[float]:
+    """Extract requested withdrawal amount from free-form text like `RM50 Maybank 12345678`."""
+    raw = (text_msg or "").strip()
+    if not raw:
+        return None
+
+    m = re.search(r"(?i)\b(?:rm\s*)?(\d+(?:[.,]\d{1,2})?)\b", raw)
+    if not m:
+        return None
+
+    try:
+        amt = float(m.group(1).replace(",", ""))
+    except Exception:
+        return None
+
+    return amt if amt > 0 else None
+
+
 def process_withdraw(bot_row, chat_id, user, text_msg):
     bot_id, token = str(bot_row["id"]), bot_row["token"]
     uid = int(user.get("id") or 0)
@@ -4626,6 +4644,25 @@ def process_withdraw(bot_row, chat_id, user, text_msg):
         ).mappings().first()
 
     bal0 = float((urow0 or {}).get("balance") or 0)
+    req_amount = parse_withdraw_request_amount(text_msg)
+
+    if req_amount is None:
+        send_message(
+            token,
+            chat_id,
+            "❌ Format withdraw tak jelas. Sila hantar macam ini:\n<code>RM50 Maybank 12345678</code>",
+            parse_mode="HTML",
+        )
+        return
+
+    if req_amount > bal0:
+        send_message(
+            token,
+            chat_id,
+            f"❌ Amount withdraw melebihi balance semasa.\nBalance: <b>RM{bal0:.2f}</b>\nRequest: <b>RM{req_amount:.2f}</b>",
+            parse_mode="HTML",
+        )
+        return
 
     if bal0 < float(min_wd):
         bot_latest = get_bot_by_id(bot_id) or bot_row
@@ -4642,7 +4679,7 @@ def process_withdraw(bot_row, chat_id, user, text_msg):
     with engine.begin() as conn:
         conn.execute(
             text("INSERT INTO withdrawals (id, bot_id, user_id, request_text, request_amount) VALUES (:id, :b, :u, :r, :a)"),
-            {"id": wid, "b": bot_id, "u": uid, "r": text_msg, "a": bal0},
+            {"id": wid, "b": bot_id, "u": uid, "r": text_msg, "a": req_amount},
         )
 
     # Custom submitted message
@@ -4668,13 +4705,14 @@ def process_withdraw(bot_row, chat_id, user, text_msg):
             f"━━━━━━━━━━━━━━━━━━\n"
             f"👤 <b>{html.escape(str(user.get('first_name') or '-'))}</b>{uname_txt}\n"
             f"🆔 UID: <code>{uid}</code>\n"
+            f"💸 <b>Request: RM{req_amount:.2f}</b>\n"
             f"💵 <b>Baki: RM{bal0:.2f}</b>\n"
             f"📝 Detail: {html.escape(text_msg or '-')}\n"
             f"🔖 ID: <code>{wid[:8]}</code>"
         )
         kb = {
             "inline_keyboard": [[
-                {"text": f"✅ Approve RM{bal0:.2f}", "callback_data": f"wd:ap:{wid}"},
+                {"text": f"✅ Approve RM{req_amount:.2f}", "callback_data": f"wd:ap:{wid}"},
                 {"text": "❌ Reject", "callback_data": f"wd:rj:{wid}"},
             ]]
         }
@@ -5048,7 +5086,7 @@ def telegram_webhook():
                     with engine.begin() as conn:
                         conn.execute(text("""
                             UPDATE bots
-                            SET loading_message=:t,
+                            SET loading_text=:t,
                                 loading_media_type=:mt,
                                 loading_media_file_id=:mf
                             WHERE id=:i
@@ -5081,8 +5119,8 @@ def telegram_webhook():
                         conn.execute(text("""
                             UPDATE bots
                             SET scan_limit_message=:t,
-                                scan_limit_media_type=:mt,
-                                scan_limit_media_file_id=:mf
+                                scan_limit_message_media_type=:mt,
+                                scan_limit_message_media_file_id=:mf
                             WHERE id=:i
                         """), {"t": txt, "mt": mt, "mf": mid, "i": bot_id})
                     del pending_inputs[(bot_id, uid)]
