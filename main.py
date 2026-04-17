@@ -6,6 +6,7 @@ import uuid
 import random
 import logging
 import html
+import threading
 from io import BytesIO
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple, List, Dict
@@ -103,6 +104,7 @@ SESSION = requests.Session()
 # Admin interactive flow state management
 # Format: {(bot_id, user_id): (action, timestamp)}
 pending_inputs = {}
+_scanner_jobs: dict = {}
 
 
 # ---------------------------
@@ -2086,8 +2088,9 @@ def send_scanner_result_edit(token: str, chat_id: int, message_id: int, firstnam
     # Prefer media edit if possible
     if media_type and file_id:
         try:
-            edit_media(token, chat_id, message_id, media_type, file_id, caption=caption, reply_markup=kb, parse_mode="HTML")
-            return True
+            ok = edit_media(token, chat_id, message_id, media_type, file_id, caption=caption, reply_markup=kb, parse_mode="HTML")
+            if ok:
+                return True
         except Exception:
             pass
 
@@ -2110,10 +2113,61 @@ def send_scanner_result_edit(token: str, chat_id: int, message_id: int, firstnam
     # Last resort: delete old message and send new one
     try:
         delete_message(token, chat_id, message_id)
-        send_message(token, chat_id, caption or " ", reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+
+    try:
+        if media_type and file_id:
+            send_scanner_result(
+                token,
+                chat_id,
+                firstname,
+                provider,
+                media,
+                games,
+                member_id=member_id,
+                cache_key=cache_key,
+                bot_row=bot_row,
+            )
+        else:
+            send_message(token, chat_id, caption or " ", reply_markup=kb, parse_mode="HTML")
         return True
     except Exception:
         return False
+
+
+def start_scanner_flow_async(token: str, chat_id: int, message_id: int, firstname: str, provider: str, media, games: List[str], member_id: str = "", cache_key: tuple = None, bot_row: Optional[dict] = None) -> bool:
+    """Run scanner animation/result in background so webhook can return immediately."""
+    job_key = (int(chat_id or 0), int(message_id or 0), str(provider or "").strip().lower())
+    now_ts = time.time()
+    existing_ts = _scanner_jobs.get(job_key)
+    if existing_ts and (now_ts - existing_ts) < 120:
+        logger.info("SCANNER: skip duplicate async job chat=%s msg=%s provider=%s", chat_id, message_id, provider)
+        return False
+
+    _scanner_jobs[job_key] = now_ts
+
+    def _worker():
+        try:
+            run_scanner_flow(
+                token,
+                chat_id,
+                message_id,
+                firstname,
+                provider,
+                media,
+                games,
+                member_id=member_id,
+                cache_key=cache_key,
+                bot_row=bot_row,
+            )
+        except Exception as e:
+            logger.exception("SCANNER async flow error chat=%s msg=%s provider=%s err=%s", chat_id, message_id, provider, e)
+        finally:
+            _scanner_jobs.pop(job_key, None)
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return True
 
 def run_scanner_flow(token: str, chat_id: int, message_id: int, firstname: str, provider: str, media, games: List[str], member_id: str = "", cache_key: tuple = None, bot_row: Optional[dict] = None) -> None:
     """Single scanner flow entrypoint: duration-aware loading animation, then final media+caption result."""
@@ -6366,7 +6420,7 @@ def telegram_webhook():
                             firstname = (from_user.get("first_name") or "").strip()
                             _mid = str((urow_gate or {}).get("member_id") or "")
                             bot_latest = get_bot_by_id(bot_id) or bot_row
-                            run_scanner_flow(
+                            start_scanner_flow_async(
                                 token,
                                 chat_id,
                                 message_id,
