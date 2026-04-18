@@ -2612,6 +2612,36 @@ def get_bot_min_withdraw(bot_row: dict) -> float:
 
 
 
+def parse_money_amount(amount_text: str) -> Optional[float]:
+    raw = re.sub(r"\s+", "", (amount_text or ""))
+    raw = re.sub(r"(?i)^rm", "", raw)
+    raw = re.sub(r"[^0-9,\.]", "", raw)
+    if not raw or not re.search(r"\d", raw):
+        return None
+
+    if "," in raw and "." in raw:
+        if raw.rfind(",") > raw.rfind("."):
+            normalized = raw.replace(".", "").replace(",", ".")
+        else:
+            normalized = raw.replace(",", "")
+    elif "," in raw:
+        parts = raw.split(",")
+        if len(parts) >= 2 and len(parts[-1]) in (1, 2):
+            normalized = "".join(parts[:-1]) + "." + parts[-1]
+        else:
+            normalized = "".join(parts)
+    else:
+        normalized = raw
+
+    try:
+        amt = float(normalized)
+    except Exception:
+        return None
+
+    return amt if amt > 0 else None
+
+
+
 def render_withdrawal_template(tpl: str, amount: float, bal_before: float, bal_after: float) -> str:
     """Simple template rendering for withdrawal approve/reject messages."""
     if not tpl:
@@ -2637,6 +2667,59 @@ def build_withdraw_insufficient_msg(min_wd: float, bal: float, bot_row: dict = N
         f"Minimum Withdraw: RM{min_wd:.2f}\n"
         f"Baki Semasa: RM{bal:.2f}"
     )
+
+
+def get_withdrawal_by_reference(conn, withdrawal_ref: str) -> Tuple[Optional[dict], bool]:
+    ref = (withdrawal_ref or "").strip()
+    if not ref:
+        return None, False
+
+    if re.fullmatch(r"[0-9a-fA-F-]{20,}", ref):
+        row = conn.execute(
+            text("SELECT * FROM withdrawals WHERE id=:i"),
+            {"i": ref},
+        ).mappings().first()
+        return row, False
+
+    prefix = re.sub(r"[^0-9a-fA-F]", "", ref).lower()
+    if len(prefix) < 8:
+        return None, False
+
+    rows = conn.execute(
+        text("SELECT * FROM withdrawals WHERE LOWER(id) LIKE :p LIMIT 2"),
+        {"p": prefix + "%"},
+    ).mappings().all()
+
+    if len(rows) > 1:
+        return None, True
+    return (rows[0] if rows else None), False
+
+
+
+def send_premium_status_message(bot_row: dict, target_uid: int, approved: bool) -> None:
+    latest = get_bot_by_id(str(bot_row["id"])) or bot_row
+    token = latest["token"]
+
+    if approved:
+        msg_user = latest.get("verified_message") or (
+            "🎉 <b>PREMIUM AKTIF, BOSSKU!</b>\n"
+            "Akses kau dah unlock ✅\n"
+            "Sekarang boleh guna semua menu premium 🔥"
+        )
+        mt = latest.get("verified_message_media_type")
+        mf = latest.get("verified_message_media_file_id")
+    else:
+        msg_user = latest.get("rejected_message") or (
+            "❌ <b>PREMIUM DITOLAK</b>\n"
+            "Bossku, admin tolak request. Kalau silap, boleh try semula."
+        )
+        mt = latest.get("rejected_message_media_type")
+        mf = latest.get("rejected_message_media_file_id")
+
+    if mt and mf:
+        send_media(token, target_uid, mt, mf, caption=msg_user, parse_mode="HTML")
+    else:
+        send_message(token, target_uid, msg_user, parse_mode="HTML")
 
 # ---------------------------
 # CLONE BOT DATA
@@ -4617,16 +4700,20 @@ def parse_withdraw_request_amount(text_msg: str) -> Optional[float]:
     if not raw:
         return None
 
-    m = re.search(r"(?i)\b(?:rm\s*)?(\d+(?:[.,]\d{1,2})?)\b", raw)
-    if not m:
-        return None
+    m_rm = re.search(r"(?i)\brm\s*([0-9][0-9.,]*)", raw)
+    if m_rm:
+        return parse_money_amount(m_rm.group(1))
 
-    try:
-        amt = float(m.group(1).replace(",", ""))
-    except Exception:
-        return None
+    for m in re.finditer(r"\b([0-9][0-9.,]*)\b", raw):
+        token = m.group(1)
+        digits_only = re.sub(r"\D", "", token)
+        if len(digits_only) > 6 and "," not in token and "." not in token:
+            continue
+        amt = parse_money_amount(token)
+        if amt is not None:
+            return amt
 
-    return amt if amt > 0 else None
+    return None
 
 
 def process_withdraw(bot_row, chat_id, user, text_msg):
@@ -4819,6 +4906,11 @@ def telegram_webhook():
                 if livegram_handle_admin_reply(bot_row, msg):
                     return "OK", 200
 
+        # IMPORTANT: handle /start with referral BEFORE creating user row without upline
+        if text_msg and text_msg.startswith("/start"):
+            handle_start(bot_row, chat_id, from_user, text_msg)
+            return "OK", 200
+
         # LIVEGRAM: forward user messages to admin group (fire-and-forget, don't return)
         if bot_row.get("livegram") and not require_admin(bot_row, uid):
             _chat_type = msg.get("chat", {}).get("type", "private")
@@ -4827,11 +4919,6 @@ def telegram_webhook():
             if not is_admin_grp:
                 if _chat_type == "private" or scope == "all":
                     livegram_forward_to_admin(bot_row, msg)
-
-        # IMPORTANT: handle /start with referral BEFORE creating user row without upline
-        if text_msg and text_msg.startswith("/start"):
-            handle_start(bot_row, chat_id, from_user, text_msg)
-            return "OK", 200
 
         # Contact share can arrive without prior /start; ensure row exists inside handle_contact()
         if msg.get("contact"):
@@ -5849,34 +5936,21 @@ def telegram_webhook():
                             conn.execute(text("UPDATE users SET is_premium=FALSE, premium_until=NULL WHERE bot_id=:b AND user_id=:u"),
                                          {"b": bot_id, "u": target_uid})
 
-                    if is_app:
-                        msg_user = bot_row.get("verified_message") or (
-                            "🎉 <b>PREMIUM AKTIF, BOSSKU!</b>\n"
-                            "Akses kau dah unlock ✅\n"
-                            "Sekarang boleh guna semua menu premium 🔥"
-                        )
-                        send_message(token, target_uid, msg_user, parse_mode="HTML")
-                        send_message(token, chat_id, "✅ Premium Approved.", parse_mode="HTML")
-                    else:
-                        msg_user = bot_row.get("rejected_message") or (
-                            "❌ <b>PREMIUM DITOLAK</b>\n"
-                            "Bossku, admin tolak request. Kalau silap, boleh try semula."
-                        )
-                        send_message(token, target_uid, msg_user, parse_mode="HTML")
-                        send_message(token, chat_id, "❌ Premium Rejected.", parse_mode="HTML")
+                    send_premium_status_message(bot_row, target_uid, is_app)
+                    send_message(token, chat_id, "✅ Premium Approved." if is_app else "❌ Premium Rejected.", parse_mode="HTML")
                     return "OK", 200
 
                 # Withdraw approval by ID
-                rid_match = re.search(r"ID:\s*<code>([0-9a-fA-F-]+)</code>", rep_txt)
+                rid_match = re.search(r"ID:\s*<code>([^<]+)</code>", rep_txt)
                 if rid_match:
-                    rid = rid_match.group(1)
+                    rid_ref = rid_match.group(1).strip()
                     is_app = text_msg.startswith("/approve")
 
                     with engine.begin() as conn:
-                        wd = conn.execute(
-                            text("SELECT * FROM withdrawals WHERE id=:i"),
-                            {"i": rid},
-                        ).mappings().first()
+                        wd, ambiguous = get_withdrawal_by_reference(conn, rid_ref)
+                        if ambiguous:
+                            send_message(token, chat_id, "⚠️ Withdrawal ID pendek tu bertindih. Guna button atau full UUID.", parse_mode="HTML")
+                            return "OK", 200
 
                         if not wd:
                             send_message(token, chat_id, "⚠️ Withdrawal ID tak jumpa.", parse_mode="HTML")
@@ -5886,20 +5960,18 @@ def telegram_webhook():
                             send_message(token, chat_id, "⚠️ Withdrawal dah diproses sebelum ni.", parse_mode="HTML")
                             return "OK", 200
 
+                        rid = wd["id"]
+
                         if is_app:
                             # /approve 50  (amount wajib)
-                            parts = (text_msg or "").split()
+                            parts = (text_msg or "").split(maxsplit=1)
                             if len(parts) < 2:
                                 send_message(token, chat_id, "Format: <code>/approve 50</code>", parse_mode="HTML")
                                 return "OK", 200
-                            try:
-                                amt = float(parts[1])
-                            except Exception:
-                                send_message(token, chat_id, "Format: <code>/approve 50</code>", parse_mode="HTML")
-                                return "OK", 200
 
-                            if amt <= 0:
-                                send_message(token, chat_id, "❌ Amount tak sah.", parse_mode="HTML")
+                            amt = parse_money_amount(parts[1])
+                            if amt is None:
+                                send_message(token, chat_id, "Format: <code>/approve 50</code>", parse_mode="HTML")
                                 return "OK", 200
 
                             # Lock user row, check balance
@@ -5936,17 +6008,30 @@ def telegram_webhook():
                             )
 
                             bal_after = bal_before - amt
-                            msg_user = (
+                            bot_latest = get_bot_by_id(bot_id) or bot_row
+                            tpl = bot_latest.get("withdrawal_approve_message") or (
                                 "✅ <b>WITHDRAW BERJAYA</b>\n"
-                                f"Jumlah: <b>RM{amt:.2f}</b>\n"
-                                f"Baki sekarang: <b>RM{bal_after:.2f}</b>\n\n"
+                                "Jumlah: <b>{amount}</b>\n"
+                                "Baki sekarang: <b>{balance_after}</b>\n\n"
                                 "Bossku, duit sedang diproses 😘"
                             )
-                            send_message(token, int(wd["user_id"]), msg_user, parse_mode="HTML")
+                            msg_user = render_withdrawal_template(tpl, amt, bal_before, bal_after)
+                            mt = bot_latest.get("withdrawal_approve_media_type")
+                            mf = bot_latest.get("withdrawal_approve_media_file_id")
+                            if mt and mf:
+                                send_media(token, int(wd["user_id"]), mt, mf, caption=msg_user, parse_mode="HTML")
+                            else:
+                                send_message(token, int(wd["user_id"]), msg_user, parse_mode="HTML")
                             send_message(token, chat_id, f"✅ Withdraw Approved. (Baki user: RM{bal_after:.2f})", parse_mode="HTML")
                             return "OK", 200
 
                         # Reject
+                        u = conn.execute(
+                            text("SELECT balance FROM users WHERE bot_id=:b AND user_id=:u FOR UPDATE"),
+                            {"b": bot_id, "u": wd["user_id"]},
+                        ).mappings().first()
+                        bal_before = float((u or {}).get("balance") or 0)
+
                         conn.execute(
                             text("""
                                 UPDATE withdrawals
@@ -5957,12 +6042,18 @@ def telegram_webhook():
                             """),
                             {"i": rid, "by": uid},
                         )
-                        send_message(
-                            token,
-                            int(wd["user_id"]),
-                            "❌ <b>WITHDRAW DITOLAK</b>\nRequest ditolak. Sila semak detail & try lagi.",
-                            parse_mode="HTML",
+                        bot_latest = get_bot_by_id(bot_id) or bot_row
+                        tpl = bot_latest.get("withdrawal_reject_message") or (
+                            "❌ <b>WITHDRAW DITOLAK</b>\n"
+                            "Request ditolak. Sila semak detail & cuba lagi."
                         )
+                        msg_user = render_withdrawal_template(tpl, 0.0, bal_before, bal_before)
+                        mt = bot_latest.get("withdrawal_reject_media_type")
+                        mf = bot_latest.get("withdrawal_reject_media_file_id")
+                        if mt and mf:
+                            send_media(token, int(wd["user_id"]), mt, mf, caption=msg_user, parse_mode="HTML")
+                        else:
+                            send_message(token, int(wd["user_id"]), msg_user, parse_mode="HTML")
                         send_message(token, chat_id, "❌ Withdraw Rejected.", parse_mode="HTML")
                     return "OK", 200
 # Dynamic command triggers (after builtins)
