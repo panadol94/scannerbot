@@ -533,41 +533,45 @@ def entities_to_html(text_: str, entities: Optional[list]) -> str:
 # ---------------------------
 def tg_call(token: str, method: str, params=None, data=None, files=None):
     try:
-        r = SESSION.post(
+        # Always close Telegram HTTP responses. Under high webhook traffic,
+        # leaked keep-alive sockets can pile up as CLOSE_WAIT and eventually
+        # make the gunicorn worker stop answering Telegram webhooks.
+        with SESSION.post(
             TG_API.format(token=token, method=method),
             params=params,
             data=data,
             files=files,
             timeout=25,
-        )
-        try:
-            js = r.json()
-        except Exception:
-            logger.error(f"TG non-JSON {method}: status={r.status_code} body={r.text[:250]}")
-            return None
+            headers={"Connection": "close"},
+        ) as r:
+            try:
+                js = r.json()
+            except Exception:
+                logger.error(f"TG non-JSON {method}: status={r.status_code} body={r.text[:250]}")
+                return None
 
-        if not js.get("ok"):
-            desc = (js.get("description") or "").lower()
-            code = js.get("error_code")
-            if method in ("editMessageText", "editMessageCaption", "editMessageMedia") and "message is not modified" in desc:
+            if not js.get("ok"):
+                desc = (js.get("description") or "").lower()
+                code = js.get("error_code")
+                if method in ("editMessageText", "editMessageCaption", "editMessageMedia") and "message is not modified" in desc:
+                    return None
+                # Suppress noisy but harmless errors to DEBUG
+                if code == 403 and any(x in desc for x in [
+                    "bot was blocked", "user is deactivated",
+                    "bot can't initiate", "bots can't send",
+                ]):
+                    logger.debug(f"TG Skip {method}: {desc}")
+                    return None
+                if code == 400 and any(x in desc for x in [
+                    "chat not found",
+                    "there is no text in the message",
+                    "query is too old",
+                ]):
+                    logger.debug(f"TG Skip {method}: {desc}")
+                    return None
+                logger.error(f"TG Error {method}: {js}")
                 return None
-            # Suppress noisy but harmless errors to DEBUG
-            if code == 403 and any(x in desc for x in [
-                "bot was blocked", "user is deactivated",
-                "bot can't initiate", "bots can't send",
-            ]):
-                logger.debug(f"TG Skip {method}: {desc}")
-                return None
-            if code == 400 and any(x in desc for x in [
-                "chat not found",
-                "there is no text in the message",
-                "query is too old",
-            ]):
-                logger.debug(f"TG Skip {method}: {desc}")
-                return None
-            logger.error(f"TG Error {method}: {js}")
-            return None
-        return js.get("result")
+            return js.get("result")
     except Exception as e:
         logger.error(f"TG Exception {method}: {e}")
         return None
@@ -2526,6 +2530,22 @@ def ensure_contact_verified(bot_row: dict, chat_id: int, user_row: dict) -> bool
         return True
     if user_row and user_row.get("is_verified"):
         return True
+
+    # Telegram only allows request_contact buttons in private chats.
+    # If a locked bot is used from a group/supergroup, sending that keyboard
+    # fails and the user sees no useful response.
+    try:
+        if int(chat_id) < 0:
+            username = bot_row.get("bot_username") or "bot"
+            send_message(
+                bot_row["token"],
+                chat_id,
+                f"🔒 Bot dikunci. Sila buka @{username} secara private dan share contact dulu.",
+                parse_mode="HTML",
+            )
+            return False
+    except Exception:
+        pass
 
     kb = {
         "keyboard": [[{"text": "📲 SHARE CONTACT", "request_contact": True}]],
