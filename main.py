@@ -2532,17 +2532,9 @@ def ensure_contact_verified(bot_row: dict, chat_id: int, user_row: dict) -> bool
         return True
 
     # Telegram only allows request_contact buttons in private chats.
-    # If a locked bot is used from a group/supergroup, sending that keyboard
-    # fails and the user sees no useful response.
+    # In groups, stay silent so lock checks do not spam the room.
     try:
         if int(chat_id) < 0:
-            username = bot_row.get("bot_username") or "bot"
-            send_message(
-                bot_row["token"],
-                chat_id,
-                f"🔒 Bot dikunci. Sila buka @{username} secara private dan share contact dulu.",
-                parse_mode="HTML",
-            )
             return False
     except Exception:
         pass
