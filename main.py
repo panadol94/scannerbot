@@ -5876,7 +5876,7 @@ def telegram_webhook():
             elif text_msg.startswith("/setcallback"):
                 rep = msg.get("reply_to_message")
                 parts = text_msg.split()
-                if rep and len(parts) >= 2:
+                if len(parts) >= 2:
                     key = parts[1].strip()
                     delay = 0
                     if "delay=" in text_msg:
@@ -5885,12 +5885,29 @@ def telegram_webhook():
                         except Exception:
                             delay = 0
 
-                    mt, mid, txt = save_content_from_reply(rep)
                     extra = "\n".join(text_msg.split("\n")[1:]).strip()
-                    final_txt = (txt + ("\n" + extra if extra else "")).strip()
+                    if rep:
+                        mt, mid, txt = save_content_from_reply(rep)
+                        final_txt = (txt + ("\n" + extra if extra else "")).strip()
+                    else:
+                        # Telegram may omit reply_to_message in groups (for example
+                        # when privacy mode hides the replied message). Still allow
+                        # admins to provide the callback body below the command.
+                        mt, mid, final_txt = None, None, extra
+
+                    if not final_txt:
+                        send_message(
+                            token,
+                            chat_id,
+                            "Cara: reply content + <code>/setcallback key</code>, atau tulis content di baris bawah command.",
+                            parse_mode="HTML",
+                        )
+                        return "OK", 200
 
                     actions_upsert(bot_id, key, mt or "text", final_txt, mid, delay)
                     send_message(token, chat_id, f"✅ Callback '{key}' Saved.", parse_mode="HTML")
+                else:
+                    send_message(token, chat_id, "Cara: <code>/setcallback key</code>", parse_mode="HTML")
 
             # NEW: /setcommand
             elif text_msg.startswith("/setcommand"):
