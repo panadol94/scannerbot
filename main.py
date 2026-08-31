@@ -1997,6 +1997,8 @@ def handle_scanner_keyboard_text(bot_row: dict, chat_id: int, user: dict, text_m
     normalized = re.sub(r"^[^\w]+", "", normalized).strip()
 
     if normalized in ("menu utama", "main menu"):
+        if send_action_key_message(bot_row, chat_id, user, "menu"):
+            return True
         handle_start(bot_row, chat_id, user, "/start")
         return True
 
