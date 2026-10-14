@@ -98,6 +98,16 @@ engine = sa.create_engine(
     future=True,
 )
 
+def _reset_db_pool_after_fork():
+    # Gunicorn --preload runs init_db in the parent. Never share its open
+    # PostgreSQL connections across workers; leave the parent's pool intact.
+    engine.dispose(close=False)
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_db_pool_after_fork)
+
+
 TG_API = "https://api.telegram.org/bot{token}/{method}"
 SESSION = requests.Session()
 
