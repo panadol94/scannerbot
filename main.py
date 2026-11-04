@@ -110,6 +110,13 @@ if hasattr(os, "register_at_fork"):
 
 TG_API = "https://api.telegram.org/bot{token}/{method}"
 SESSION = requests.Session()
+TG_HTTP_MAX_ATTEMPTS = 2
+TG_HTTP_BUDGET_SECONDS = 25.0
+TG_HTTP_RETRY_DELAY_SECONDS = 0.25
+TG_RETRY_SAFE_METHODS = frozenset({
+    "editMessageText", "editMessageCaption", "editMessageMedia",
+    "editMessageReplyMarkup", "answerCallbackQuery",
+})
 
 # Admin interactive flow state management
 # Format: {(bot_id, user_id): (action, timestamp)}
@@ -542,49 +549,75 @@ def entities_to_html(text_: str, entities: Optional[list]) -> str:
 # TELEGRAM API
 # ---------------------------
 def tg_call(token: str, method: str, params=None, data=None, files=None):
-    try:
-        # Always close Telegram HTTP responses. Under high webhook traffic,
-        # leaked keep-alive sockets can pile up as CLOSE_WAIT and eventually
-        # make the gunicorn worker stop answering Telegram webhooks.
-        with SESSION.post(
-            TG_API.format(token=token, method=method),
-            params=params,
-            data=data,
-            files=files,
-            timeout=25,
-            headers={"Connection": "close"},
-        ) as r:
-            try:
-                js = r.json()
-            except Exception:
-                logger.error(f"TG non-JSON {method}: status={r.status_code} body={r.text[:250]}")
-                return None
+    bot_id = str(token).partition(":")[0]
+    if not bot_id.isdigit():
+        bot_id = "unknown"
+    deadline = time.monotonic() + TG_HTTP_BUDGET_SECONDS
+    # Do not re-prepare uploads/streams: their bodies may already be consumed.
+    replayable_body = not files and not hasattr(data, "read")
+    for attempt in range(1, TG_HTTP_MAX_ATTEMPTS + 1):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        connect_timeout = min(5.0, remaining / 2.0)
+        read_timeout = min(15.0, remaining - connect_timeout)
+        try:
+            # Close every response, including failures; keep the retry budget
+            # shared across attempts rather than waiting 25 seconds each time.
+            with SESSION.post(
+                TG_API.format(token=token, method=method),
+                params=params, data=data, files=files,
+                timeout=(connect_timeout, read_timeout),
+                headers={"Connection": "close"},
+            ) as r:
+                try:
+                    js = r.json()
+                except Exception as exc:
+                    logger.error("TG non-JSON method=%s bot_id=%s status=%s type=%s",
+                                 method, bot_id, r.status_code, type(exc).__name__)
+                    return None
 
-            if not js.get("ok"):
-                desc = (js.get("description") or "").lower()
-                code = js.get("error_code")
-                if method in ("editMessageText", "editMessageCaption", "editMessageMedia") and "message is not modified" in desc:
+                if not js.get("ok"):
+                    desc = (js.get("description") or "").lower()
+                    code = js.get("error_code")
+                    if method.startswith("editMessage") and method in TG_RETRY_SAFE_METHODS and "message is not modified" in desc:
+                        # A retry can see this after the first edit succeeded
+                        # but its response was lost. Do not send a duplicate.
+                        return True
+                    if code == 403 and any(x in desc for x in [
+                        "bot was blocked", "user is deactivated",
+                        "bot can't initiate", "bots can't send",
+                    ]):
+                        logger.debug("TG Skip method=%s bot_id=%s code=%s", method, bot_id, code)
+                        return None
+                    if code == 400 and any(x in desc for x in [
+                        "chat not found", "there is no text in the message", "query is too old",
+                    ]):
+                        logger.debug("TG Skip method=%s bot_id=%s code=%s", method, bot_id, code)
+                        return None
+                    # API failures (including 429) are not retried here.
+                    logger.error("TG Error method=%s bot_id=%s code=%s", method, bot_id, code)
                     return None
-                # Suppress noisy but harmless errors to DEBUG
-                if code == 403 and any(x in desc for x in [
-                    "bot was blocked", "user is deactivated",
-                    "bot can't initiate", "bots can't send",
-                ]):
-                    logger.debug(f"TG Skip {method}: {desc}")
-                    return None
-                if code == 400 and any(x in desc for x in [
-                    "chat not found",
-                    "there is no text in the message",
-                    "query is too old",
-                ]):
-                    logger.debug(f"TG Skip {method}: {desc}")
-                    return None
-                logger.error(f"TG Error {method}: {js}")
-                return None
-            return js.get("result")
-    except Exception as e:
-        logger.error(f"TG Exception {method}: {e}")
-        return None
+                return js.get("result")
+        except Exception as exc:
+            # ConnectTimeout means no request was delivered. Other network
+            # failures are ambiguous: never blindly repeat a send/payment.
+            retry_safe = isinstance(exc, requests.exceptions.ConnectTimeout) or (
+                method in TG_RETRY_SAFE_METHODS
+                and isinstance(exc, (requests.exceptions.ConnectionError, requests.exceptions.Timeout))
+            )
+            remaining = deadline - time.monotonic()
+            if (retry_safe and replayable_body and attempt < TG_HTTP_MAX_ATTEMPTS
+                    and remaining > TG_HTTP_RETRY_DELAY_SECONDS + 1.0):
+                logger.warning("TG Retry method=%s bot_id=%s type=%s attempt=%s",
+                               method, bot_id, type(exc).__name__, attempt)
+                time.sleep(TG_HTTP_RETRY_DELAY_SECONDS)
+                continue
+            # Exception strings can contain a URL with the entire bot token.
+            logger.error("TG Exception method=%s bot_id=%s type=%s attempts=%s",
+                         method, bot_id, type(exc).__name__, attempt)
+            return None
+    return None
 
 
 def send_message(token, chat_id, text_, reply_markup=None, parse_mode="HTML", reply_to_message_id=None):
@@ -1637,7 +1670,7 @@ def build_scanner_result_keyboard(provider: str, bot_row: Optional[dict] = None)
     return {"inline_keyboard": rows}
 
 
-def send_scanner_result(token: str, chat_id: int, firstname: str, provider: str, media: Dict, games: List[str], member_id: str = "", cache_key: tuple = None, bot_row: Optional[dict] = None) -> None:
+def send_scanner_result(token: str, chat_id: int, firstname: str, provider: str, media: Dict, games: List[str], member_id: str = "", cache_key: tuple = None, bot_row: Optional[dict] = None) -> Optional[dict]:
     provider_clean = norm_provider(provider)
     provider_label = provider_clean.upper() if provider_clean else provider
     caption = build_scanner_caption(firstname, provider_label, games, member_id=member_id, cache_key=cache_key)
@@ -1658,14 +1691,14 @@ def send_scanner_result(token: str, chat_id: int, firstname: str, provider: str,
         pass
 
     if media_type == "photo":
-        tg_send_photo(token, chat_id, file_id, caption=caption, reply_markup=kb, parse_mode="HTML")
+        return tg_send_photo(token, chat_id, file_id, caption=caption, reply_markup=kb, parse_mode="HTML")
     elif media_type == "video":
-        tg_send_video(token, chat_id, file_id, caption=caption, reply_markup=kb, parse_mode="HTML")
+        return tg_send_video(token, chat_id, file_id, caption=caption, reply_markup=kb, parse_mode="HTML")
     elif media_type == "animation":
-        tg_send_animation(token, chat_id, file_id, caption=caption, reply_markup=kb, parse_mode="HTML")
+        return tg_send_animation(token, chat_id, file_id, caption=caption, reply_markup=kb, parse_mode="HTML")
     else:
         # fallback document
-        tg_send_document(token, chat_id, file_id, caption=caption, reply_markup=kb, parse_mode="HTML")
+        return tg_send_document(token, chat_id, file_id, caption=caption, reply_markup=kb, parse_mode="HTML")
 
 
 
@@ -2126,15 +2159,11 @@ def send_scanner_result_edit(token: str, chat_id: int, message_id: int, firstnam
     except Exception:
         pass
 
-    # Last resort: delete old message and send new one
-    try:
-        delete_message(token, chat_id, message_id)
-    except Exception:
-        pass
-
+    # Last resort: send once, keeping the old message until replacement is
+    # confirmed. A timeout/reset may mean the send succeeded; do not repeat it.
     try:
         if media_type and file_id:
-            send_scanner_result(
+            replacement = send_scanner_result(
                 token,
                 chat_id,
                 firstname,
@@ -2146,10 +2175,16 @@ def send_scanner_result_edit(token: str, chat_id: int, message_id: int, firstnam
                 bot_row=bot_row,
             )
         else:
-            send_message(token, chat_id, caption or " ", reply_markup=kb, parse_mode="HTML")
-        return True
+            replacement = send_message(token, chat_id, caption or " ", reply_markup=kb, parse_mode="HTML")
     except Exception:
         return False
+    if not replacement:
+        return False
+    try:
+        delete_message(token, chat_id, message_id)
+    except Exception:
+        pass
+    return True
 
 
 def start_scanner_flow_async(token: str, chat_id: int, message_id: int, firstname: str, provider: str, media, games: List[str], member_id: str = "", cache_key: tuple = None, bot_row: Optional[dict] = None) -> bool:
@@ -2185,7 +2220,7 @@ def start_scanner_flow_async(token: str, chat_id: int, message_id: int, firstnam
     threading.Thread(target=_worker, daemon=True).start()
     return True
 
-def run_scanner_flow(token: str, chat_id: int, message_id: int, firstname: str, provider: str, media, games: List[str], member_id: str = "", cache_key: tuple = None, bot_row: Optional[dict] = None) -> None:
+def run_scanner_flow(token: str, chat_id: int, message_id: int, firstname: str, provider: str, media, games: List[str], member_id: str = "", cache_key: tuple = None, bot_row: Optional[dict] = None) -> bool:
     """Single scanner flow entrypoint: duration-aware loading animation, then final media+caption result."""
     scan_duration = get_scanner_duration_seconds(bot_row)
 
@@ -2200,8 +2235,10 @@ def run_scanner_flow(token: str, chat_id: int, message_id: int, firstname: str, 
     except Exception:
         pass
 
-    if not send_scanner_result_edit(token, chat_id, message_id, firstname, provider, media, games, member_id=member_id, cache_key=cache_key, bot_row=bot_row):
-        send_scanner_result(token, chat_id, firstname, provider, _coerce_media_dict(media), games, member_id=member_id, cache_key=cache_key, bot_row=bot_row)
+    delivered = send_scanner_result_edit(token, chat_id, message_id, firstname, provider, media, games, member_id=member_id, cache_key=cache_key, bot_row=bot_row)
+    if not delivered:
+        logger.error("SCANNER result delivery unconfirmed chat=%s message=%s provider=%s", chat_id, message_id, provider)
+    return delivered
 
 
 def require_admin(bot_row: dict, uid: int) -> bool:
